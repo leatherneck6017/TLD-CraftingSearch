@@ -381,7 +381,8 @@ namespace CraftingSearch
             if (panel == null)
                 return null;
 
-            UISprite fallback = null;
+            UISprite bestCandidate = null;
+            int bestArea = -1;
 
             foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
             {
@@ -392,22 +393,30 @@ namespace CraftingSearch
                 string nameLower = sprite.gameObject.name.ToLowerInvariant();
                 string spriteLower = sprite.spriteName.ToLowerInvariant();
 
-                // Prefer sprites belonging to blueprints list/rows/cards inside Panel_Crafting
-                bool inBlueprintsArea = path.Contains("blueprint") || nameLower.Contains("blueprint") || nameLower.Contains("row") || nameLower.Contains("card");
-                if (!inBlueprintsArea)
+                // Skip icons, checkmarks, dividers, and scrollbars
+                if (nameLower.Contains("icon") || nameLower.Contains("check") || nameLower.Contains("arrow") ||
+                    nameLower.Contains("divider") || nameLower.Contains("line") || nameLower.Contains("scroll") ||
+                    spriteLower.Contains("icon") || spriteLower.Contains("check") || spriteLower.Contains("arrow"))
+                {
+                    continue;
+                }
+
+                // Skip tiny sprites so we don't grab small badges or icons
+                if (sprite.width < 120 || sprite.height < 24)
                     continue;
 
-                if (fallback == null)
-                    fallback = sprite;
+                bool inCraftingOrBlueprints = path.Contains("blueprint") || path.Contains("craftingsection") || path.Contains("blueprintlist");
+                int area = sprite.width * sprite.height + (inCraftingOrBlueprints ? 1_000_000 : 0);
 
-                if (spriteLower.Contains("bg") || spriteLower.Contains("backing") || spriteLower.Contains("box") || spriteLower.Contains("panel") || spriteLower.Contains("frame"))
+                if (area > bestArea)
                 {
-                    return sprite;
+                    bestArea = area;
+                    bestCandidate = sprite;
                 }
             }
 
-            if (fallback != null)
-                return fallback;
+            if (bestCandidate != null)
+                return bestCandidate;
 
             foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
             {
