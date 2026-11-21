@@ -1,5 +1,6 @@
 ﻿using Il2Cpp;
 using Il2CppInterop.Runtime;
+using Il2CppTLD.UI.Scroll;
 using MelonLoader;
 using UnityEngine;
 
@@ -11,19 +12,81 @@ namespace CraftingSearch
         private const int BoxHeight = 36;
         internal static UIInput SearchInput;
         private static Panel_Crafting _craftingPanel;
-        private static Texture2D _solidTex;
+        //private static Texture2D _solidTex;
 
-        private static Texture2D GetSolidTexture()
+        // delete this method if you don't need to debug the hierarchy path of a transform
+        private static UISprite FindSpriteByPathOrName(
+            Panel_Crafting panel,
+            string requiredPathSubstring,
+            string preferredSpriteName = null)
         {
-            if (_solidTex != null)
-                return _solidTex;
+            if (panel == null)
+                return null;
 
-            _solidTex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-            _solidTex.SetPixel(0, 0, Color.white);
-            _solidTex.Apply();
-            _solidTex.hideFlags = HideFlags.HideAndDontSave;
-            return _solidTex;
+            UISprite firstMatch = null;
+            string reqLower = (requiredPathSubstring ?? string.Empty).ToLowerInvariant();
+            string prefLower = (preferredSpriteName ?? string.Empty).ToLowerInvariant();
+
+            foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
+            {
+                if (sprite == null || sprite.atlas == null || string.IsNullOrEmpty(sprite.spriteName))
+                    continue;
+
+                string path = GetHierarchyPath(sprite.transform);
+                string pathLower = path.ToLowerInvariant();
+                string spriteLower = sprite.spriteName.ToLowerInvariant();
+
+                if (!string.IsNullOrEmpty(reqLower) && !pathLower.Contains(reqLower))
+                    continue;
+
+                if (!string.IsNullOrEmpty(prefLower) && spriteLower == prefLower)
+                {
+                    MelonLogger.Msg($"Matched exact sprite '{sprite.spriteName}' at '{path}' ({sprite.width}x{sprite.height})");
+                    return sprite;
+                }
+
+                if (firstMatch == null)
+                    firstMatch = sprite;
+            }
+
+            if (firstMatch != null)
+            {
+                MelonLogger.Msg($"Matched path '{requiredPathSubstring}' -> sprite='{firstMatch.spriteName}' at '{GetHierarchyPath(firstMatch.transform)}' ({firstMatch.width}x{firstMatch.height})");
+            }
+
+            return firstMatch;
         }
+
+        // use this method to log all the UISprite objects in the crafting panel hierarchy, which can help you find a suitable background sprite for the search box
+        //private static void LogBlueprintListSprites(Panel_Crafting panel)
+        //{
+        //    if (panel == null)
+        //        return;
+
+        //    foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
+        //    {
+        //        if (sprite == null || sprite.atlas == null || string.IsNullOrEmpty(sprite.spriteName))
+        //            continue;
+
+        //        string path = GetHierarchyPath(sprite.transform);
+        //        if (path.Contains("BlueprintList", System.StringComparison.OrdinalIgnoreCase))
+        //        {
+        //            MelonLogger.Msg($"BP sprite='{sprite.spriteName}' ({sprite.width}x{sprite.height}, type={sprite.type}) at '{path}'");
+        //        }
+        //    }
+        //}
+
+        //private static Texture2D GetSolidTexture()
+        //{
+        //    if (_solidTex != null)
+        //        return _solidTex;
+
+        //    _solidTex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+        //    _solidTex.SetPixel(0, 0, Color.white);
+        //    _solidTex.Apply();
+        //    _solidTex.hideFlags = HideFlags.HideAndDontSave;
+        //    return _solidTex;
+        //}
 
         internal static string CurrentQuery =>
             SearchInput != null && SearchInput.value != null ? SearchInput.value.Trim() : string.Empty;
@@ -58,12 +121,12 @@ namespace CraftingSearch
                     x = localHeaderPos.x + (BoxWidth * 0.5f) - (lbl.width * 0.5f);
                     y = localHeaderPos.y + yOffset;
 
-                    MelonLogger.Msg($"[CraftingSearch] Positioned above '{txt}' ({objName}) at local ({x:F1}, {y:F1})");
+                    MelonLogger.Msg($"Positioned above '{txt}' ({objName}) at local ({x:F1}, {y:F1})");
                     return;
                 }
             }
 
-            MelonLogger.Msg($"[CraftingSearch] 'Blueprint' label not found; using fallback ({x:F1}, {y:F1})");
+            MelonLogger.Msg($"'Blueprint' label not found; using fallback ({x:F1}, {y:F1})");
         }
 
         internal static void AttachTo(Panel_Crafting panel)
@@ -91,7 +154,7 @@ namespace CraftingSearch
             }
 
             Transform targetParent = panel.transform.childCount > 0 ? panel.transform.GetChild(0) : panel.transform;
-            MelonLogger.Msg($"[CraftingSearch] Cloning '{template.transform.root.name}/{template.name}' onto '{targetParent.name}' (layer {targetParent.gameObject.layer})");
+            MelonLogger.Msg($"Cloning '{template.transform.root.name}/{template.name}' onto '{targetParent.name}' (layer {targetParent.gameObject.layer})");
 
             GameObject clone = UnityEngine.Object.Instantiate(template.gameObject, targetParent);
             clone.name = "CraftingSearchInput";
@@ -139,65 +202,9 @@ namespace CraftingSearch
                 }
             }
 
-            //Texture2D solidTex = GetSolidTexture();
+            //LogBlueprintListSprites(panel); // Optional debug log to help find a suitable background sprite for the search box
 
-            //Shader boxShader =
-            //                Shader.Find("Unlit/Transparent Colored") ??
-            //                Shader.Find("Unlit/Premultiplied Colored") ??
-            //                Shader.Find("UI/Default");
-
-            //// Outer border
-            //GameObject borderGo = new GameObject("SearchBorder");
-            //borderGo.transform.SetParent(clone.transform, false);
-            //borderGo.layer = clone.layer;
-            //borderGo.transform.localPosition = new Vector3(0f, 0f, 1f);
-            //borderGo.transform.localScale = Vector3.one;
-
-            //UITexture border = borderGo.AddComponent<UITexture>();
-            //border.mainTexture = solidTex;
-            //if (boxShader != null)
-            //    border.shader = boxShader;
-            //border.color = new Color(0.82f, 0.84f, 0.88f, 1f);
-            //border.alpha = 1f;
-            //border.width = BoxWidth + 8;
-            //border.height = BoxHeight + 8;
-            //border.depth = 498;
-            //border.MarkAsChanged();
-
-            //// Inner solid slate-gray background fill
-            //GameObject bgGo = new GameObject("SearchBg");
-            //bgGo.transform.SetParent(clone.transform, false);
-            //bgGo.layer = clone.layer;
-            //bgGo.transform.localPosition = new Vector3(0f, 0f, 0f);
-            //bgGo.transform.localScale = Vector3.one;
-
-            //UITexture bg = bgGo.AddComponent<UITexture>();
-            //bg.mainTexture = solidTex;
-            //if (boxShader != null)
-            //    bg.shader = boxShader;
-            //bg.color = new Color(0.38f, 0.40f, 0.43f, 1f);
-            //bg.alpha = 1f;
-            //bg.width = BoxWidth;
-            //bg.height = BoxHeight;
-            //bg.depth = 499;
-            //bg.MarkAsChanged();
-
-            //var panelForRefresh = UIPanel.Find(clone.transform);
-            //if (panelForRefresh != null)
-            //{
-            //    try
-            //    {
-            //        panelForRefresh.SetDirty();
-            //    }
-            //    catch
-            //    {
-            //        // Safe fallback if SetDirty is stripped or non-public in this build
-            //    }
-            //}
-
-            //MelonLogger.Msg($"[CraftingSearch] Border shader={(border.shader != null ? border.shader.name : "null")}, Bg shader={(bg.shader != null ? bg.shader.name : "null")}");
-
-            UISprite bpBgSource = FindBlueprintsBackgroundSource(panel);
+            UISprite bpBgSource = FindSpriteByPathOrName(panel, "BlueprintListPrefab(Clone)/BG", "inv_statBack");
             if (bpBgSource != null)
             {
                 GameObject bgGo = new GameObject("SearchBg");
@@ -211,14 +218,14 @@ namespace CraftingSearch
                 bgSprite.spriteName = bpBgSource.spriteName;
                 bgSprite.type = bpBgSource.type;
                 bgSprite.alpha = 1f;
-                // Keep a moderate tint so it is distinct from black without washing out white text
-                bgSprite.color = new Color(0.55f, 0.58f, 0.62f, 1f);
+                // try to match the color of the blueprint list background, but make it slightly darker and more opaque
+                bgSprite.color = new Color(0.15f, 0.17f, 0.17f, 0.95f);
                 bgSprite.width = BoxWidth;
                 bgSprite.height = BoxHeight;
                 bgSprite.depth = 499;
                 bgSprite.MarkAsChanged();
 
-                MelonLogger.Msg($"[CraftingSearch] Borrowed BP bg sprite='{bpBgSource.spriteName}' from '{GetHierarchyPath(bpBgSource.transform)}'");
+                MelonLogger.Msg($"Borrowed BP bg sprite='{bpBgSource.spriteName}' from '{GetHierarchyPath(bpBgSource.transform)}'");
             }
 
             // Destroy the template's old label(s) so no hidden anchors or broken fonts interfere
@@ -300,7 +307,7 @@ namespace CraftingSearch
             TryGetAboveBlueprintsPosition(panel, targetParent, ref searchBoxX, ref searchBoxY);
             clone.transform.localPosition = new Vector3(searchBoxX, searchBoxY, -20f);
 
-            MelonLogger.Msg($"[CraftingSearch] Attached at localPos={clone.transform.localPosition}, labelActive={label.gameObject.activeInHierarchy}, hasFont={(label.bitmapFont != null || label.trueTypeFont != null)}");
+            //MelonLogger.Msg($"Attached at localPos={clone.transform.localPosition}, labelActive={label.gameObject.activeInHierarchy}, hasFont={(label.bitmapFont != null || label.trueTypeFont != null)}");
         }
 
         private static UILabel FindValidFontSource(Panel_Crafting panel)
@@ -329,7 +336,7 @@ namespace CraftingSearch
         private static UIInput FindTemplateInput()
         {
             var inputs = Resources.FindObjectsOfTypeAll<UIInput>();
-            MelonLogger.Msg($"[CraftingSearch] Found {inputs.Length} total UIInput objects.");
+            MelonLogger.Msg($"Found {inputs.Length} total UIInput objects.");
             UIInput fallback = null;
 
             for (int i = 0; i < inputs.Length; i++)
@@ -376,56 +383,56 @@ namespace CraftingSearch
             }
         }
 
-        private static UISprite FindBlueprintsBackgroundSource(Panel_Crafting panel)
-        {
-            if (panel == null)
-                return null;
+        //private static UISprite FindBlueprintsBackgroundSource(Panel_Crafting panel)
+        //{
+        //    if (panel == null)
+        //        return null;
 
-            UISprite bestCandidate = null;
-            int bestArea = -1;
+        //    UISprite bestCandidate = null;
+        //    int bestArea = -1;
 
-            foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
-            {
-                if (sprite == null || sprite.atlas == null || string.IsNullOrEmpty(sprite.spriteName))
-                    continue;
+        //    foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
+        //    {
+        //        if (sprite == null || sprite.atlas == null || string.IsNullOrEmpty(sprite.spriteName))
+        //            continue;
 
-                string path = GetHierarchyPath(sprite.transform).ToLowerInvariant();
-                string nameLower = sprite.gameObject.name.ToLowerInvariant();
-                string spriteLower = sprite.spriteName.ToLowerInvariant();
+        //        string path = GetHierarchyPath(sprite.transform).ToLowerInvariant();
+        //        string nameLower = sprite.gameObject.name.ToLowerInvariant();
+        //        string spriteLower = sprite.spriteName.ToLowerInvariant();
 
-                // Skip icons, checkmarks, dividers, and scrollbars
-                if (nameLower.Contains("icon") || nameLower.Contains("check") || nameLower.Contains("arrow") ||
-                    nameLower.Contains("divider") || nameLower.Contains("line") || nameLower.Contains("scroll") ||
-                    spriteLower.Contains("icon") || spriteLower.Contains("check") || spriteLower.Contains("arrow"))
-                {
-                    continue;
-                }
+        //        // Skip icons, checkmarks, dividers, and scrollbars
+        //        if (nameLower.Contains("icon") || nameLower.Contains("check") || nameLower.Contains("arrow") ||
+        //            nameLower.Contains("divider") || nameLower.Contains("line") || nameLower.Contains("scroll") ||
+        //            spriteLower.Contains("icon") || spriteLower.Contains("check") || spriteLower.Contains("arrow"))
+        //        {
+        //            continue;
+        //        }
 
-                // Skip tiny sprites so we don't grab small badges or icons
-                if (sprite.width < 120 || sprite.height < 24)
-                    continue;
+        //        // Skip tiny sprites so we don't grab small badges or icons
+        //        if (sprite.width < 120 || sprite.height < 24)
+        //            continue;
 
-                bool inCraftingOrBlueprints = path.Contains("blueprint") || path.Contains("craftingsection") || path.Contains("blueprintlist");
-                int area = sprite.width * sprite.height + (inCraftingOrBlueprints ? 1_000_000 : 0);
+        //        bool inCraftingOrBlueprints = path.Contains("blueprint") || path.Contains("craftingsection") || path.Contains("blueprintlist");
+        //        int area = sprite.width * sprite.height + (inCraftingOrBlueprints ? 1_000_000 : 0);
 
-                if (area > bestArea)
-                {
-                    bestArea = area;
-                    bestCandidate = sprite;
-                }
-            }
+        //        if (area > bestArea)
+        //        {
+        //            bestArea = area;
+        //            bestCandidate = sprite;
+        //        }
+        //    }
 
-            if (bestCandidate != null)
-                return bestCandidate;
+        //    if (bestCandidate != null)
+        //        return bestCandidate;
 
-            foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
-            {
-                if (sprite != null && sprite.atlas != null && !string.IsNullOrEmpty(sprite.spriteName))
-                    return sprite;
-            }
+        //    foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
+        //    {
+        //        if (sprite != null && sprite.atlas != null && !string.IsNullOrEmpty(sprite.spriteName))
+        //            return sprite;
+        //    }
 
-            return null;
-        }
+        //    return null;
+        //}
 
         private static string GetHierarchyPath(Transform t)
         {
@@ -443,46 +450,7 @@ namespace CraftingSearch
             return string.Join("/", parts);
         }
 
-        //private static UILabel CreateBackgroundLabel(
-        //    Transform parent,
-        //    int layer,
-        //    UILabel fontSource,
-        //    Color color,
-        //    int depth,
-        //    float zOffset,
-        //    string blockGlyph,
-        //    float scaleX,
-        //    float scaleY)
-        //{
-        //    GameObject go = new GameObject("SearchBg");
-        //    go.transform.SetParent(parent, false);
-        //    go.layer = layer;
-
-        //    UILabel bg = go.AddComponent<UILabel>();
-        //    if (fontSource != null)
-        //    {
-        //        if (fontSource.bitmapFont != null)
-        //            bg.bitmapFont = fontSource.bitmapFont;
-        //        else if (fontSource.trueTypeFont != null)
-        //            bg.trueTypeFont = fontSource.trueTypeFont;
-        //    }
-
-        //    bg.overflowMethod = UILabel.Overflow.ResizeFreely;
-        //    bg.maxLineCount = 1;
-        //    bg.pivot = UIWidget.Pivot.Center;
-        //    bg.alignment = NGUIText.Alignment.Center;
-        //    bg.text = blockGlyph;
-        //    bg.color = color;
-        //    bg.alpha = 1f;
-        //    bg.depth = depth;
-        //    bg.transform.localPosition = new Vector3(0f, 0f, zOffset);
-        //    bg.transform.localScale = new Vector3(scaleX, scaleY, 1f);
-        //    bg.enabled = true;
-        //    go.SetActive(true);
-        //    bg.MarkAsChanged();
-
-        //    return bg;
-        //}
+        private static bool _pendingFilterRefresh;
 
         private static void OnSearchTextChanged()
         {
@@ -492,8 +460,6 @@ namespace CraftingSearch
             if (SearchInput != null && SearchInput.label != null)
             {
                 UILabel lbl = SearchInput.label;
-                var parentPanel = UIPanel.Find(lbl.transform);
-                MelonLogger.Msg($"[CraftingSearch] lblPos={lbl.transform.position}, lblLocal={lbl.transform.localPosition}, lblDepth={lbl.depth}, lblAlpha={lbl.finalAlpha}, panel={(parentPanel != null ? parentPanel.name : "null")}, panelDepth={(parentPanel != null ? parentPanel.depth : -1)}");
                 lbl.gameObject.SetActive(true);
                 lbl.enabled = true;
                 lbl.alpha = 1f;
@@ -502,9 +468,82 @@ namespace CraftingSearch
                 lbl.MarkAsChanged();
             }
 
-            if (_craftingPanel != null && _craftingPanel.IsEnabled())
+            if (!_pendingFilterRefresh)
             {
-                _craftingPanel.ApplyFilter();
+                _pendingFilterRefresh = true;
+                MelonCoroutines.Start(RefreshFilterNextFrame());
+            }
+        }
+
+        private static System.Collections.IEnumerator RefreshFilterNextFrame()
+        {
+            yield return null;
+            _pendingFilterRefresh = false;
+
+            if (_craftingPanel == null || !_craftingPanel.IsEnabled())
+                yield break;
+
+            _craftingPanel.ApplyFilter();
+            _craftingPanel.RefreshAvailableBlueprints();
+
+            foreach (var scrollBehaviour in _craftingPanel.GetComponentsInChildren<ScrollBehaviour>(true))
+            {
+                if (scrollBehaviour != null)
+                {
+                    try
+                    {
+                        scrollBehaviour.enabled = true;
+                        scrollBehaviour.SendMessage("Refresh", UnityEngine.SendMessageOptions.DontRequireReceiver);
+                        scrollBehaviour.SendMessage("Update", UnityEngine.SendMessageOptions.DontRequireReceiver);
+                    }
+                    catch
+                    {
+                        // Safe if IL2CPP method/message isn't exposed
+                    }
+                }
+            }
+            
+            foreach (var scrollView in _craftingPanel.GetComponentsInChildren<UIScrollView>(true))
+            {
+                if (scrollView != null)
+                {
+                    scrollView.InvalidateBounds();
+                    scrollView.UpdateScrollbars(true);
+                    scrollView.RestrictWithinBounds(true, false, true);
+                }
+            }
+
+            foreach (var grid in _craftingPanel.GetComponentsInChildren<UIGrid>(true))
+            {
+                if (grid != null)
+                {
+                    grid.repositionNow = true;
+                    grid.Reposition();
+                }
+            }
+
+            foreach (var table in _craftingPanel.GetComponentsInChildren<UITable>(true))
+            {
+                if (table != null)
+                {
+                    table.repositionNow = true;
+                    table.Reposition();
+                }
+            }
+
+            foreach (var uiPanel in _craftingPanel.GetComponentsInChildren<UIPanel>(true))
+            {
+                if (uiPanel != null)
+                {
+                    try
+                    {
+                        uiPanel.SetDirty();
+                    }
+                    catch
+                    {
+                        // Safe if stripped or non-public in this IL2CPP build
+                    }
+                }
             }
         }
     }

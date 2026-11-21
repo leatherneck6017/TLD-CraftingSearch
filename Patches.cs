@@ -45,6 +45,8 @@ namespace CraftingSearch
             if (filtered == null)
                 return;
 
+            int beforeCount = filtered.Count;
+
             if (!string.IsNullOrEmpty(query))
             {
                 for (int i = filtered.Count - 1; i >= 0; i--)
@@ -62,14 +64,89 @@ namespace CraftingSearch
                         filtered.RemoveAt(i);
                     }
                 }
+                
+                LogPanelFields(__instance);
+
+                if (__instance.gameObject != null && __instance.IsEnabled())
+                {
+                    foreach (var grid in __instance.GetComponentsInChildren<UIGrid>(true))
+                    {
+                        if (grid != null)
+                        {
+                            grid.repositionNow = true;
+                            grid.Reposition();
+                        }
+                    }
+
+                    foreach (var table in __instance.GetComponentsInChildren<UITable>(true))
+                    {
+                        if (table != null)
+                        {
+                            table.repositionNow = true;
+                            table.Reposition();
+                        }
+                    }
+
+                    foreach (var scrollView in __instance.GetComponentsInChildren<UIScrollView>(true))
+                    {
+                        if (scrollView != null)
+                        {
+                            scrollView.UpdateScrollbars(true);
+                        }
+                    }
+                }
             }
 
-            // Tell Panel_Crafting.Update() to redraw the blueprint grid immediately
+            MelonLoader.MelonLogger.Msg($"[CraftingSearch] ApplyFilter_Postfix query='{query}' count {beforeCount} -> {filtered.Count}");
+
             __instance.m_NeedsUpdate = true;
+
+            try
+            {
+                __instance.RefreshAvailableBlueprints();
+            }
+            catch
+            {
+                // Safe fallback if RefreshAvailableBlueprints throws on a particular state
+            }
+
+            if (__instance.gameObject != null && __instance.IsEnabled())
+            {
+                foreach (var grid in __instance.GetComponentsInChildren<UIGrid>(true))
+                {
+                    if (grid != null)
+                    {
+                        grid.repositionNow = true;
+                        grid.Reposition();
+                    }
+                }
+
+                foreach (var table in __instance.GetComponentsInChildren<UITable>(true))
+                {
+                    if (table != null)
+                    {
+                        table.repositionNow = true;
+                        table.Reposition();
+                    }
+                }
+
+                foreach (var scrollView in __instance.GetComponentsInChildren<UIScrollView>(true))
+                {
+                    if (scrollView != null)
+                    {
+                        scrollView.UpdateScrollbars(true);
+                    }
+                }
+            }
+
+            RefreshCraftingScrollList(__instance, filtered);
         }
 
         private static void RefreshCraftingScrollList(Panel_Crafting panel, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
         {
+            if (panel == null)
+                return;
+
             var flags = System.Reflection.BindingFlags.Public |
                         System.Reflection.BindingFlags.NonPublic |
                         System.Reflection.BindingFlags.Instance;
@@ -77,11 +154,42 @@ namespace CraftingSearch
             if (!_loggedScrollList)
             {
                 _loggedScrollList = true;
-                foreach (var prop in typeof(Panel_Crafting).GetProperties(flags))
+                foreach (var method in typeof(Panel_Crafting).GetMethods(flags))
                 {
-                    if (prop.Name.StartsWith("m_"))
+                    string mName = method.Name;
+                    if (mName.Contains("Refresh", System.StringComparison.OrdinalIgnoreCase) ||
+                        mName.Contains("Blueprint", System.StringComparison.OrdinalIgnoreCase) ||
+                        mName.Contains("List", System.StringComparison.OrdinalIgnoreCase) ||
+                        mName.Contains("Select", System.StringComparison.OrdinalIgnoreCase))
                     {
-                        MelonLoader.MelonLogger.Msg($"[CraftingSearch] Panel_Crafting prop: {prop.Name} ({prop.PropertyType.Name})");
+                        MelonLoader.MelonLogger.Msg($"Panel_Crafting method: {mName} (params={method.GetParameters().Length})");
+                    }
+                }
+            }
+
+            // Try common refresh/update method names on Panel_Crafting that take 0 arguments
+            string[] candidateMethods =
+            [
+                "RefreshBlueprintList",
+                "RefreshBlueprints",
+                "RefreshList",
+                "UpdateBlueprintList",
+                "PopulateBlueprintList",
+                "RefreshSelectedBlueprint"
+            ];
+
+            foreach (string candidate in candidateMethods)
+            {
+                var method = typeof(Panel_Crafting).GetMethod(candidate, flags, null, System.Type.EmptyTypes, null);
+                if (method != null)
+                {
+                    try
+                    {
+                        method.Invoke(panel, null);
+                    }
+                    catch
+                    {
+                        // Ignore if signature or state doesn't match
                     }
                 }
             }
@@ -153,12 +261,57 @@ namespace CraftingSearch
                 if (setMapsEnabled != null)
                 {
                     setMapsEnabled.Invoke(maps, [!locked, 0]);
-                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] Rewired Keyboard maps enabled = {!locked}");
+                    //MelonLoader.MelonLogger.Msg($"Rewired Keyboard maps enabled = {!locked}");
                 }
             }
             catch (System.Exception ex)
             {
                 MelonLoader.MelonLogger.Warning($"[CraftingSearch] Rewired lock error: {ex.Message}");
+            }
+        }
+
+        // Debugging utility to log all fields of Panel_Crafting that may be relevant to crafting lists
+        //private static void LogListFields(Panel_Crafting panel)
+        //{
+        //    var flags = System.Reflection.BindingFlags.Public |
+        //                System.Reflection.BindingFlags.NonPublic |
+        //                System.Reflection.BindingFlags.Instance;
+
+        //    foreach (var field in typeof(Panel_Crafting).GetFields(flags))
+        //    {
+        //        string fName = field.Name;
+        //        if (fName.Contains("Blueprint", System.StringComparison.OrdinalIgnoreCase) ||
+        //            fName.Contains("List", System.StringComparison.OrdinalIgnoreCase) ||
+        //            fName.Contains("Scroll", System.StringComparison.OrdinalIgnoreCase) ||
+        //            fName.Contains("Item", System.StringComparison.OrdinalIgnoreCase))
+        //        {
+        //            MelonLoader.MelonLogger.Msg($"[CraftingSearch] Panel_Crafting field: {fName} ({field.FieldType.Name})");
+        //        }
+        //    }
+        //}
+
+        private static bool _loggedFields;
+
+        private static void LogPanelFields(Panel_Crafting panel)
+        {
+            if (_loggedFields || panel == null)
+                return;
+
+            _loggedFields = true;
+            var flags = System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+
+            foreach (var field in typeof(Panel_Crafting).GetFields(flags))
+            {
+                string fName = field.Name;
+                if (fName.Contains("Blueprint", System.StringComparison.OrdinalIgnoreCase) ||
+                    fName.Contains("List", System.StringComparison.OrdinalIgnoreCase) ||
+                    fName.Contains("Scroll", System.StringComparison.OrdinalIgnoreCase) ||
+                    fName.Contains("Filter", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] Panel_Crafting field: {fName} ({field.FieldType.Name})");
+                }
             }
         }
     }
