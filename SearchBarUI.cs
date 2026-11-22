@@ -12,6 +12,7 @@ namespace CraftingSearch
         internal static UIInput SearchInput;
         private static Panel_Crafting _craftingPanel;
         private static bool _pendingFilterRefresh;
+        private static GameObject _clearButtonGo;
 
         internal static string CurrentQuery =>
             SearchInput != null && SearchInput.value != null ? SearchInput.value.Trim() : string.Empty;
@@ -239,6 +240,70 @@ namespace CraftingSearch
             collider.size = new Vector3(BoxWidth, BoxHeight, 1f);
             collider.center = Vector3.zero;
             collider.enabled = true;
+            
+            // add clearing button to the right side of the search box
+            _clearButtonGo = new GameObject("ClearButton");
+            _clearButtonGo.transform.SetParent(clone.transform, false);
+            _clearButtonGo.layer = clone.layer;
+            _clearButtonGo.transform.localPosition = new Vector3(132f, 0f, -3f);
+            _clearButtonGo.transform.localScale = Vector3.one;
+
+            UILabel clearLabel = null;
+            if (sourceLabel != null)
+            {
+                GameObject clearLabelGo = UnityEngine.Object.Instantiate(sourceLabel.gameObject, _clearButtonGo.transform);
+                clearLabelGo.name = "ClearLabel";
+                SetLayerRecursively(clearLabelGo, _clearButtonGo.layer);
+
+                foreach (var mb in clearLabelGo.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (mb == null) continue;
+                    if (mb.GetIl2CppType().Name != nameof(UILabel))
+                    {
+                        UnityEngine.Object.Destroy(mb);
+                    }
+                }
+
+                clearLabel = clearLabelGo.GetComponent<UILabel>();
+            }
+
+            if (clearLabel == null)
+            {
+                clearLabel = _clearButtonGo.AddComponent<UILabel>();
+            }
+
+            clearLabel.gameObject.SetActive(true);
+            clearLabel.enabled = true;
+            clearLabel.alpha = 1f;
+            clearLabel.color = new Color(0.85f, 0.85f, 0.85f, 1f);
+            clearLabel.pivot = UIWidget.Pivot.Center;
+            clearLabel.alignment = NGUIText.Alignment.Center;
+            clearLabel.overflowMethod = UILabel.Overflow.ResizeFreely;
+            clearLabel.maxLineCount = 1;
+            clearLabel.width = 24;
+            clearLabel.height = 24;
+            clearLabel.depth = 505;
+            clearLabel.transform.localScale = Vector3.one;
+            clearLabel.transform.localPosition = Vector3.zero;
+            clearLabel.text = "X";
+            clearLabel.MarkAsChanged();
+
+            BoxCollider clearCollider = _clearButtonGo.GetComponent<BoxCollider>() ?? _clearButtonGo.AddComponent<BoxCollider>();
+            clearCollider.size = new Vector3(26f, 26f, 1f);
+            clearCollider.center = Vector3.zero;
+            clearCollider.enabled = true;
+
+            UIEventListener clearListener = _clearButtonGo.GetComponent<UIEventListener>() ?? _clearButtonGo.AddComponent<UIEventListener>();
+            clearListener.onClick = DelegateSupport.ConvertDelegate<UIEventListener.VoidDelegate>(
+                new System.Action<GameObject>((_) =>
+                {
+                    Clear();
+                    OnSearchTextChanged();
+                })
+            );
+
+            _clearButtonGo.SetActive(false);
+
 
             EventDelegate.Add(SearchInput.onChange, DelegateSupport.ConvertDelegate<EventDelegate.Callback>(
                 new System.Action(OnSearchTextChanged)
@@ -318,6 +383,10 @@ namespace CraftingSearch
                     SearchInput.label.MarkAsChanged();
                 }
             }
+            if (_clearButtonGo != null)
+            {
+                _clearButtonGo.SetActive(false);
+            }
         }
 
         private static void OnSearchTextChanged()
@@ -334,7 +403,10 @@ namespace CraftingSearch
                 //lbl.text = string.IsNullOrEmpty(current) ? (SearchInput.defaultText ?? string.Empty) : current;
                 //lbl.MarkAsChanged();
             }
-
+            if (_clearButtonGo != null)
+            {
+                _clearButtonGo.SetActive(!string.IsNullOrEmpty(current));
+            }
             if (!_pendingFilterRefresh)
             {
                 _pendingFilterRefresh = true;
