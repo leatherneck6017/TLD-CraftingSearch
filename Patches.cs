@@ -108,35 +108,44 @@ namespace CraftingSearch
 
             __instance.m_NeedsUpdate = true;
 
-            //if (__instance.gameObject != null && __instance.IsEnabled())
-            //{
-            //    foreach (var grid in __instance.GetComponentsInChildren<UIGrid>(true))
-            //    {
-            //        if (grid != null)
-            //        {
-            //            grid.repositionNow = true;
-            //            grid.Reposition();
-            //        }
-            //    }
+            var flags = System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
 
-            //    foreach (var table in __instance.GetComponentsInChildren<UITable>(true))
-            //    {
-            //        if (table != null)
-            //        {
-            //            table.repositionNow = true;
-            //            table.Reposition();
-            //        }
-            //    }
+            var refreshAvail = typeof(Panel_Crafting).GetMethod("RefreshAvailableBlueprints", flags);
+            if (refreshAvail != null && refreshAvail.GetParameters().Length == 0)
+            {
+                try { refreshAvail.Invoke(__instance, null); } catch { }
+            }
 
-            //    foreach (var scrollView in __instance.GetComponentsInChildren<UIScrollView>(true))
-            //    {
-            //        if (scrollView != null)
-            //        {
-            //            scrollView.UpdateScrollbars(true);
-            //        }
-            //    }
-            //}
+            if (__instance.gameObject != null && __instance.IsEnabled())
+            {
+                foreach (var grid in __instance.GetComponentsInChildren<UIGrid>(true))
+                {
+                    if (grid != null)
+                    {
+                        grid.repositionNow = true;
+                        grid.Reposition();
+                    }
+                }
 
+                foreach (var table in __instance.GetComponentsInChildren<UITable>(true))
+                {
+                    if (table != null)
+                    {
+                        table.repositionNow = true;
+                        table.Reposition();
+                    }
+                }
+
+                foreach (var scrollView in __instance.GetComponentsInChildren<UIScrollView>(true))
+                {
+                    if (scrollView != null)
+                    {
+                        scrollView.UpdateScrollbars(true);
+                    }
+                }
+            }
             RefreshCraftingScrollList(__instance, filtered);
         }
 
@@ -182,46 +191,29 @@ namespace CraftingSearch
             try
             {
                 var addrRef = bp.m_CraftingIcon;
+                if (addrRef == null)
+                    return;
+
+                var flags = System.Reflection.BindingFlags.Public |
+                            System.Reflection.BindingFlags.NonPublic |
+                            System.Reflection.BindingFlags.Instance;
+
                 Texture resolvedTex = null;
-
-                if (addrRef != null)
+                var assetProp = addrRef.GetType().GetProperty("Asset", flags);
+                if (assetProp != null)
                 {
-                    var flags = System.Reflection.BindingFlags.Public |
-                                System.Reflection.BindingFlags.NonPublic |
-                                System.Reflection.BindingFlags.Instance;
-
-                    var assetProp = addrRef.GetType().GetProperty("Asset", flags);
-                    if (assetProp != null)
-                    {
-                        resolvedTex = assetProp.GetValue(addrRef) as Texture;
-                    }
-
-                    if (resolvedTex == null)
-                    {
-                        var loadMethod = addrRef.GetType().GetMethod("LoadAssetAsync", flags, null, System.Type.EmptyTypes, null);
-                        var op = loadMethod?.Invoke(addrRef, null);
-                        if (op != null)
-                        {
-                            var waitMethod = op.GetType().GetMethod("WaitForCompletion", flags, null, System.Type.EmptyTypes, null);
-                            object completed = waitMethod != null
-                                ? waitMethod.Invoke(op, null)
-                                : op.GetType().GetProperty("Result", flags)?.GetValue(op);
-                            resolvedTex = completed as Texture;
-                        }
-                    }
+                    resolvedTex = assetProp.GetValue(addrRef) as Texture;
                 }
 
-                if (resolvedTex != null)
+                if (resolvedTex != null && iconTexture.mainTexture != resolvedTex)
                 {
                     iconTexture.mainTexture = resolvedTex;
-                    iconTexture.enabled = true;
-                    iconTexture.gameObject.SetActive(true);
                     iconTexture.MarkAsChanged();
                 }
             }
             catch
             {
-                // Ignore if Addressables asset isn't loaded or signature differs
+                // Ignore if Addressables asset is not loaded yet
             }
         }
 
@@ -398,9 +390,17 @@ namespace CraftingSearch
                 new System.Action<UnityEngine.GameObject>((_) =>
                 {
                     var activeList = panel.m_FilteredBlueprints ?? panel.m_Blueprints;
+                    if (activeList != null && capturedIndex >= 0 && capturedIndex < activeList.Count)
+                    {
+                        SelectBlueprintByIndex(panel, capturedIndex);
+                        return;
+                    }
+
                     int resolvedIndex = ResolveBlueprintIndexForRow(panel, row, activeList);
-                    int targetIndex = resolvedIndex >= 0 ? resolvedIndex : capturedIndex;
-                    SelectBlueprintByIndex(panel, targetIndex);
+                    if (resolvedIndex >= 0)
+                    {
+                        SelectBlueprintByIndex(panel, resolvedIndex);
+                    }
                 })
             );
         }
@@ -917,17 +917,79 @@ namespace CraftingSearch
                     row.gameObject.SetActive(false);
                 }
             }
+            
+            LogScrollBehaviourMethods(scrollBehaviour);
+
+            foreach (var sb in panel.GetComponentsInChildren<ScrollBehaviour>(true))
+            {
+                if (sb == null) continue;
+                var flags = System.Reflection.BindingFlags.Public |
+                            System.Reflection.BindingFlags.NonPublic |
+                            System.Reflection.BindingFlags.Instance;
+
+                foreach (var mName in new[] { "RefreshItems", "LayoutItems" })
+                {
+                    var m = sb.GetType().GetMethod(mName, flags);
+                    if (m != null && m.GetParameters().Length == 0)
+                    {
+                        try { m.Invoke(sb, null); } catch { }
+                    }
+                }
+            }
+
+            bool allFitInView = filtered.Count <= rowTransforms.Count;
+
+            foreach (var sb in panel.GetComponentsInChildren<ScrollBehaviour>(true))
+            {
+                if (sb == null) continue;
+                var flags = System.Reflection.BindingFlags.Public |
+                            System.Reflection.BindingFlags.NonPublic |
+                            System.Reflection.BindingFlags.Instance;
+
+                var rebuildMethod = sb.GetType().GetMethod("RebuildItems", flags, null, [typeof(int)], null);
+                if (rebuildMethod != null)
+                {
+                    try { rebuildMethod.Invoke(sb, [filtered.Count]); } catch { }
+                }
+
+                foreach (var mName in new[] { "RefreshItems", "LayoutItems" })
+                {
+                    var m = sb.GetType().GetMethod(mName, flags);
+                    if (m != null && m.GetParameters().Length == 0)
+                    {
+                        try { m.Invoke(sb, null); } catch { }
+                    }
+                }
+            }
 
             foreach (var scrollView in scrollBehaviour.GetComponentsInChildren<UIScrollView>(true))
             {
-                if (scrollView != null)
+                if (scrollView == null) continue;
+
+                scrollView.currentMomentum = UnityEngine.Vector3.zero;
+                scrollView.ResetPosition();
+                scrollView.enabled = !allFitInView;
+                scrollView.disableDragIfFits = allFitInView;
+
+                if (scrollView.verticalScrollBar != null)
                 {
-                    scrollView.currentMomentum = UnityEngine.Vector3.zero;
-                    scrollView.ResetPosition();
-                    scrollView.UpdateScrollbars(true);
+                    if (allFitInView)
+                    {
+                        scrollView.verticalScrollBar.value = 0f;
+                        scrollView.verticalScrollBar.gameObject.SetActive(false);
+                    }
+                    else
+                    {
+                        scrollView.verticalScrollBar.gameObject.SetActive(true);
+                    }
                 }
+
+                scrollView.UpdateScrollbars(true);
             }
+
+            panel.m_NeedsUpdate = true;
         }
+
         // Attempt to lock or unlock native input handling when the search bar is active
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
@@ -1044,6 +1106,25 @@ namespace CraftingSearch
                 {
                     MelonLoader.MelonLogger.Msg($"[CraftingSearch] Panel_Crafting field: {fName} ({field.FieldType.Name})");
                 }
+            }
+        }
+
+        private static bool _loggedScrollMethods;
+
+        private static void LogScrollBehaviourMethods(ScrollBehaviour sb)
+        {
+            if (_loggedScrollMethods || sb == null)
+                return;
+
+            _loggedScrollMethods = true;
+            var flags = System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+
+            foreach (var m in sb.GetType().GetMethods(flags))
+            {
+                var parms = string.Join(", ", System.Array.ConvertAll(m.GetParameters(), p => $"{p.ParameterType.Name} {p.Name}"));
+                MelonLoader.MelonLogger.Msg($"[CraftingSearch] ScrollBehaviour.{m.Name}({parms})");
             }
         }
     }
