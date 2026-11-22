@@ -455,7 +455,6 @@ namespace CraftingSearch
         private static void OnSearchTextChanged()
         {
             string current = SearchInput != null && SearchInput.value != null ? SearchInput.value : string.Empty;
-            MelonLogger.Msg($"[CraftingSearch] OnSearchTextChanged -> '{current}'");
 
             if (SearchInput != null && SearchInput.label != null)
             {
@@ -473,6 +472,9 @@ namespace CraftingSearch
                 _pendingFilterRefresh = true;
                 MelonCoroutines.Start(RefreshFilterNextFrame());
             }
+
+            MelonLogger.Msg($"OnSearchTextChanged -> '{current}'");
+
         }
 
         private static System.Collections.IEnumerator RefreshFilterNextFrame()
