@@ -7,8 +7,9 @@ namespace CraftingSearch
 {
     internal static class SearchBarUI
     {
-        private const int BoxWidth = 300;
+        private const int BoxWidth = 380;
         private const int BoxHeight = 36;
+        private const int SearchFontSize = 17;
         internal static UIInput SearchInput;
         private static Panel_Crafting _craftingPanel;
         private static bool _pendingFilterRefresh;
@@ -228,11 +229,12 @@ namespace CraftingSearch
             label.alignment = NGUIText.Alignment.Left;
             label.overflowMethod = UILabel.Overflow.ClampContent;
             label.maxLineCount = 1;
-            label.width = 280; // adjust width to fit within the box, taking into account the 'x' button and padding
-            label.height = 34;
+            label.fontSize = SearchFontSize; // adjust font size to fit within the box, taking into account the 'x' button and padding
+            label.width = 360; // adjust width to fit within the box, taking into account the 'x' button and padding
+            label.height = 32;
             label.depth = 500; // depth should be higher than the background sprite to ensure it's visible
             label.transform.localScale = Vector3.one;
-            label.transform.localPosition = new Vector3(-144f, 0f, -2f); // position the label to the left side of the box, with some padding
+            label.transform.localPosition = new Vector3(-185f, 0f, -2f); // position the text to the left side of the box, with some padding
             label.text = "Search blueprints...";
             label.MarkAsChanged();
 
@@ -245,7 +247,7 @@ namespace CraftingSearch
             _clearButtonGo = new GameObject("ClearButton");
             _clearButtonGo.transform.SetParent(clone.transform, false);
             _clearButtonGo.layer = clone.layer;
-            _clearButtonGo.transform.localPosition = new Vector3(132f, 0f, -3f);
+            _clearButtonGo.transform.localPosition = new Vector3(177f, 0f, -3f); // position the X to the right side of the box, with some padding
             _clearButtonGo.transform.localScale = Vector3.one;
 
             UILabel clearLabel = null;
@@ -280,6 +282,7 @@ namespace CraftingSearch
             clearLabel.alignment = NGUIText.Alignment.Center;
             clearLabel.overflowMethod = UILabel.Overflow.ResizeFreely;
             clearLabel.maxLineCount = 1;
+            clearLabel.fontSize = SearchFontSize;
             clearLabel.width = 24;
             clearLabel.height = 24;
             clearLabel.depth = 505;
