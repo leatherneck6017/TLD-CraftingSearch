@@ -189,6 +189,10 @@ namespace CraftingSearch
                     }
                 }
             }
+            // check to see if the search query is non-empty and the filtered list is empty, indicating no matches
+            bool noSearchMatches = !string.IsNullOrEmpty(query) && filtered.Count == 0;
+            SetDetailPaneBlank(__instance, noSearchMatches);
+
             RefreshCraftingScrollList(__instance, filtered);
         }
 
@@ -1365,6 +1369,72 @@ namespace CraftingSearch
 
             panel.m_NeedsUpdate = true;
         }
+
+        // Attempt to blank out the image, description, and requirements panes when a search filter is active and isn't showing a valid result, to avoid confusion with stale data
+        private static void SetDetailPaneBlank(Panel_Crafting panel, bool blank)
+        {
+            if (panel == null)
+                return;
+
+            Transform searchBarGo = SearchBarUI.SearchInput != null
+                ? SearchBarUI.SearchInput.transform
+                : null;
+
+            foreach (var t in panel.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == null)
+                    continue;
+
+                // Never touch the search bar itself, category buttons, or blueprint list rows
+                if (searchBarGo != null && (t == searchBarGo || t.IsChildOf(searchBarGo)))
+                    continue;
+
+                if (t.name.Contains("BlueprintListPrefab", System.StringComparison.OrdinalIgnoreCase) ||
+                    t.name.Contains("Button_", System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string n = t.gameObject.name;
+                string parentName = t.parent != null ? t.parent.gameObject.name : string.Empty;
+
+                bool isDetailOrRequirementTarget =
+                    n.Equals("BlueprintItemRoot", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("ItemName", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("ItemDescription", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftMaterial 1", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftMaterial 2", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftMaterial 3", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftMaterial 4", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftLocation", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftTime", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftTool", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftMultiTool", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftPhotoSelect", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftQuantitySelect", System.StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("RequirementCraftTimeSelect", System.StringComparison.OrdinalIgnoreCase) ||
+                    parentName.Equals("ItemStats", System.StringComparison.OrdinalIgnoreCase) ||
+                    parentName.Equals("ClothingOnly", System.StringComparison.OrdinalIgnoreCase) ||
+                    parentName.Equals("HoursRemaining", System.StringComparison.OrdinalIgnoreCase) ||
+                    parentName.Equals("HoursToCraft", System.StringComparison.OrdinalIgnoreCase);
+
+                if (isDetailOrRequirementTarget)
+                {
+                    if (blank)
+                    {
+                        t.gameObject.SetActive(false);
+                    }
+                    else
+                    {
+                        // Only re-activate main item/requirement slots when not a multi-material slot that was inactive
+                        if (!n.StartsWith("RequirementCraftMaterial ", System.StringComparison.OrdinalIgnoreCase) ||
+                            n.EndsWith(" 1", System.StringComparison.OrdinalIgnoreCase))
+                        {
+                            t.gameObject.SetActive(true);
+                        }
+                    }
+                }
+            }
+        }
+
         // Attempt to lock or unlock native input handling when the search bar is active
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
