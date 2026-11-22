@@ -10,7 +10,19 @@ namespace CraftingSearch
     internal static class Panel_Crafting_Patches
     {
         private static bool _wasTyping;
+        private static bool _hadSearchQuery = false;
+        private static bool _scrollBehaviourPatched;
 
+        private static void EnsureScrollBehaviourPatched()
+        {
+            if (_scrollBehaviourPatched)
+                return;
+
+            _scrollBehaviourPatched = true;
+            var harmony = new HarmonyLib.Harmony("leatherneck6017.CraftingSearch.ScrollBehaviour");
+            PatchScrollBehaviourScroll(harmony);
+        }
+        
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Panel_Crafting.Enable), [typeof(bool), typeof(bool)])]
         private static bool Enable_Prefix(bool enable)
@@ -28,6 +40,7 @@ namespace CraftingSearch
         {
             if (enable)
             {
+                EnsureScrollBehaviourPatched();
                 SearchBarUI.AttachTo(__instance);
             }
             else
@@ -43,10 +56,43 @@ namespace CraftingSearch
         private static void ApplyFilter_Postfix(Panel_Crafting __instance)
         {
             _lastIndexByBaseName.Clear();
+            _trackedFirstLineIndex = 0; 
             string query = SearchBarUI.CurrentQuery;
             var filtered = __instance.m_FilteredBlueprints;
+            bool isQueryEmpty = string.IsNullOrEmpty(query);
+            bool queryJustCleared = _hadSearchQuery && isQueryEmpty;
+            _hadSearchQuery = !isQueryEmpty;
+
+            if (queryJustCleared && filtered.Count == 0 && __instance.m_Blueprints != null && __instance.m_Blueprints.Count > 0)
+            {
+                filtered.Clear();
+                for (int i = 0; i < __instance.m_Blueprints.Count; i++)
+                {
+                    var bp = __instance.m_Blueprints[i];
+                    if (bp != null)
+                    {
+                        filtered.Add(bp);
+                    }
+                }
+
+                var catFlags = System.Reflection.BindingFlags.Public |
+                               System.Reflection.BindingFlags.NonPublic |
+                               System.Reflection.BindingFlags.Instance;
+
+                foreach (string methodName in new[] { "FilterByCategory", "ApplyCategoryFilter", "RefreshCategory", "RefreshFilteredBlueprints", "UpdateFilteredBlueprints" })
+                {
+                    var m = typeof(Panel_Crafting).GetMethod(methodName, catFlags);
+                    if (m != null && m.GetParameters().Length == 0)
+                    {
+                        try { m.Invoke(__instance, null); break; } catch { }
+                    }
+                }
+            }
+
             if (filtered == null)
                 return;
+
+            RestoreCategoryBlueprintsIfEmpty(__instance, filtered, query);
 
             int beforeCount = filtered.Count;
 
@@ -146,6 +192,203 @@ namespace CraftingSearch
             RefreshCraftingScrollList(__instance, filtered);
         }
 
+        private static readonly System.Collections.Generic.Dictionary<string, float> _lastScrollLogTime =
+                    new System.Collections.Generic.Dictionary<string, float>();
+
+        private static void RestoreCategoryBlueprintsIfEmpty(
+            Panel_Crafting panel,
+            Il2CppSystem.Collections.Generic.List<BlueprintData> filtered,
+            string query)
+        {
+            if (panel == null || filtered == null || !string.IsNullOrEmpty(query))
+                return;
+
+            if (filtered.Count > 0)
+                return;
+
+            var allBlueprints = panel.m_Blueprints;
+            if (allBlueprints == null || allBlueprints.Count == 0)
+                return;
+
+            var flags = System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+
+            object selectedCategory = null;
+            foreach (string memberName in new[] { "m_SelectedCategory", "m_CurrentCategory", "m_Category", "SelectedCategory", "CurrentCategory" })
+            {
+                var field = typeof(Panel_Crafting).GetField(memberName, flags);
+                if (field != null)
+                {
+                    try { selectedCategory = field.GetValue(panel); break; } catch { }
+                }
+
+                var prop = typeof(Panel_Crafting).GetProperty(memberName, flags);
+                if (prop != null && prop.GetIndexParameters().Length == 0)
+                {
+                    try { selectedCategory = prop.GetValue(panel); break; } catch { }
+                }
+            }
+
+            filtered.Clear();
+
+            for (int i = 0; i < allBlueprints.Count; i++)
+            {
+                var bp = allBlueprints[i];
+                if (bp == null)
+                    continue;
+
+                if (selectedCategory != null)
+                {
+                    bool categoryMatches = false;
+                    foreach (string bpCatMember in new[] { "m_Category", "Category", "m_CraftingCategory", "CraftingCategory" })
+                    {
+                        var bpField = bp.GetType().GetField(bpCatMember, flags);
+                        if (bpField != null)
+                        {
+                            try
+                            {
+                                var val = bpField.GetValue(bp);
+                                if (val != null && (Equals(val, selectedCategory) || string.Equals(val.ToString(), selectedCategory.ToString(), System.StringComparison.OrdinalIgnoreCase)))
+                                {
+                                    categoryMatches = true;
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+
+                        var bpProp = bp.GetType().GetProperty(bpCatMember, flags);
+                        if (bpProp != null && bpProp.GetIndexParameters().Length == 0)
+                        {
+                            try
+                            {
+                                var val = bpProp.GetValue(bp);
+                                if (val != null && (Equals(val, selectedCategory) || string.Equals(val.ToString(), selectedCategory.ToString(), System.StringComparison.OrdinalIgnoreCase)))
+                                {
+                                    categoryMatches = true;
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    if (!categoryMatches)
+                        continue;
+                }
+
+                filtered.Add(bp);
+            }
+        }
+        
+        private static void PatchScrollBehaviourScroll(HarmonyLib.Harmony harmony)
+        {
+            if (harmony == null)
+                return;
+
+            var flags = System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance |
+                        System.Reflection.BindingFlags.DeclaredOnly;
+
+            var sbType = typeof(ScrollBehaviour);
+            var postfixMethod = typeof(Panel_Crafting_Patches).GetMethod(
+                nameof(ScrollBehaviourAnyMethod_Postfix),
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+
+            if (postfixMethod == null)
+                return;
+
+            foreach (var method in sbType.GetMethods(flags))
+            {
+                if (method == null || method.IsSpecialName)
+                    continue;
+
+                string name = method.Name ?? string.Empty;
+                if (name.StartsWith("get_", System.StringComparison.Ordinal) ||
+                    name.StartsWith("set_", System.StringComparison.Ordinal) ||
+                    name.StartsWith("add_", System.StringComparison.Ordinal) ||
+                    name.StartsWith("remove_", System.StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    harmony.Patch(method, postfix: new HarmonyLib.HarmonyMethod(postfixMethod));
+                }
+                catch
+                {
+                    // Skip methods Harmony cannot patch in IL2CPP
+                }
+            }
+        }
+        private static int _trackedFirstLineIndex = 0;
+
+        private static int ReadScrollBehaviourFirstLine(ScrollBehaviour sb)
+        {
+            if (sb == null)
+                return -1;
+
+            var flags = System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+
+            var type = sb.GetType();
+            foreach (string memberName in new[] { "FirstLine", "m_FirstLine", "m_TopIndex", "TopIndex", "m_StartIndex", "StartIndex" })
+            {
+                var prop = type.GetProperty(memberName, flags);
+                if (prop != null && prop.PropertyType == typeof(int) && prop.GetIndexParameters().Length == 0)
+                {
+                    try { return (int)prop.GetValue(sb); } catch { }
+                }
+
+                var field = type.GetField(memberName, flags);
+                if (field != null && field.FieldType == typeof(int))
+                {
+                    try { return (int)field.GetValue(sb); } catch { }
+                }
+            }
+
+            return -1;
+        }
+
+        private static void ScrollBehaviourAnyMethod_Postfix(ScrollBehaviour __instance, System.Reflection.MethodBase __originalMethod)
+        {
+            if (__instance == null || __originalMethod == null)
+                return;
+
+            string methodName = __originalMethod.Name ?? "Unknown";
+
+            if (string.Equals(methodName, "UpdateFirstLine", System.StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(methodName, "RefreshItems", System.StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(methodName, "OnScrollBarChange", System.StringComparison.OrdinalIgnoreCase))
+            {
+                int line = ReadScrollBehaviourFirstLine(__instance);
+                if (line >= 0)
+                {
+                    _trackedFirstLineIndex = line;
+                }
+            }
+
+            if (string.Equals(methodName, "HandleOnItemSelected", System.StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(methodName, "SetSelectedIndex", System.StringComparison.OrdinalIgnoreCase))
+            {
+                var panel = __instance.GetComponentInParent<Panel_Crafting>();
+                if (panel != null && !string.IsNullOrEmpty(SearchBarUI.CurrentQuery))
+                {
+                    panel.m_NeedsUpdate = true;
+                }
+            }
+            
+            float now = UnityEngine.Time.unscaledTime;
+            if (_lastScrollLogTime.TryGetValue(methodName, out float lastTime) && (now - lastTime) < 2.0f)
+                return;
+
+            _lastScrollLogTime[methodName] = now;
+            MelonLoader.MelonLogger.Msg($"[CraftingSearch] ScrollBehaviour.{methodName} invoked (firstLine={_trackedFirstLineIndex})");
+        }
         private static readonly System.Collections.Generic.Dictionary<string, int> _lastIndexByBaseName =
             new System.Collections.Generic.Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
 
@@ -214,6 +457,41 @@ namespace CraftingSearch
             }
         }
 
+        private static readonly System.Collections.Generic.HashSet<int> _hookedScrollViews =
+            new System.Collections.Generic.HashSet<int>();
+
+        private static void HookCraftingScrollViews(Panel_Crafting panel)
+        {
+            if (panel == null)
+                return;
+
+            foreach (var sv in panel.GetComponentsInChildren<UIScrollView>(true))
+            {
+                if (sv == null)
+                    continue;
+
+                int id = sv.GetInstanceID();
+                if (_hookedScrollViews.Contains(id))
+                    continue;
+
+                _hookedScrollViews.Add(id);
+
+                var onScrollAction = new System.Action(() =>
+                {
+                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] Game scroll event fired on '{sv.name}'");
+                    var filtered = panel.m_FilteredBlueprints;
+                    if (filtered != null && !string.IsNullOrEmpty(SearchBarUI.CurrentQuery))
+                    {
+                        SyncBlueprintListRows(panel, filtered);
+                    }
+                });
+
+                var del = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UIScrollView.OnDragNotification>(onScrollAction);
+                sv.onMomentumMove += del;
+                sv.onDragFinished += del;
+            }
+        }
+
         // HELPER: Attempt to refresh the crafting scroll list and re-select the first matching blueprint if available
         private static void RefreshCraftingScrollList(Panel_Crafting panel, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
         {
@@ -271,38 +549,51 @@ namespace CraftingSearch
                 }
             }
         }
-
-        // HELPER: Attempt to select a blueprint by index, with fallback to refresh the list and re-select if necessary
         private static void SelectBlueprintByIndex(Panel_Crafting panel, int blueprintIndex)
         {
             if (panel == null || blueprintIndex < 0)
                 return;
 
-            var list = panel.m_FilteredBlueprints ?? panel.m_Blueprints;
-            if (list == null || blueprintIndex >= list.Count)
+            var filteredList = panel.m_FilteredBlueprints;
+            var allList = panel.m_Blueprints;
+            var sourceList = filteredList ?? allList;
+            if (sourceList == null || blueprintIndex >= sourceList.Count)
                 return;
 
             try
             {
-                BlueprintData bp = list[blueprintIndex];
-                string selectedDisp = bp != null ? (bp.GetDisplayedNameWithCount() ?? string.Empty).Trim() : string.Empty;
-                string selectedRaw = bp != null ? (bp.name ?? string.Empty).Trim() : string.Empty;
+                BlueprintData bp = sourceList[blueprintIndex];
+                if (bp == null)
+                    return;
+
+                string selectedDisp = (bp.GetDisplayedNameWithCount() ?? string.Empty).Trim();
+                string selectedRaw = (bp.name ?? string.Empty).Trim();
 
                 panel.RefreshSelectedBlueprint(blueprintIndex);
-                panel.m_NeedsUpdate = true;
 
                 var flags = System.Reflection.BindingFlags.Public |
                             System.Reflection.BindingFlags.NonPublic |
                             System.Reflection.BindingFlags.Instance;
 
-                foreach (string methodName in new[] { "UpdateSelected", "RefreshAvailableBlueprints" })
+                var sb = panel.GetComponentInChildren<ScrollBehaviour>(true);
+                if (sb != null)
                 {
-                    var m = typeof(Panel_Crafting).GetMethod(methodName, flags);
-                    if (m != null && m.GetParameters().Length == 0)
+                    var setSelMethod = sb.GetType().GetMethod("SetSelectedIndex", flags, null, [typeof(int)], null);
+                    if (setSelMethod != null)
                     {
-                        try { m.Invoke(panel, null); } catch { }
+                        try { setSelMethod.Invoke(sb, [blueprintIndex]); } catch { }
                     }
                 }
+
+                var refreshAvail = typeof(Panel_Crafting).GetMethod("RefreshAvailableBlueprints", flags);
+                if (refreshAvail != null && refreshAvail.GetParameters().Length == 0)
+                {
+                    try { refreshAvail.Invoke(panel, null); } catch { }
+                }
+
+                panel.m_NeedsUpdate = true;
+
+                MelonLoader.MelonLogger.Msg($"[CraftingSearch] Select directIdx={blueprintIndex}/{sourceList.Count} raw='{selectedRaw}' disp='{selectedDisp}'");
 
                 foreach (var widget in panel.GetComponentsInChildren<UIWidget>(true))
                 {
@@ -317,10 +608,193 @@ namespace CraftingSearch
                 // Ignore if IL2CPP signature or state doesn't match
             }
         }
-        // Attempt to bind a click handler to a row that selects the corresponding blueprint index
-        private static void BindRowIndexClickHandler(Panel_Crafting panel, Transform row, int blueprintIndex)
+        private static int GetCurrentScrollOffset(Panel_Crafting panel, int totalItems, int visibleSlots)
         {
-            if (panel == null || row == null || blueprintIndex < 0)
+            if (panel == null || totalItems <= 1)
+                return 0;
+
+            try
+            {
+                var scrollView = panel.GetComponentInChildren<UIScrollView>(true);
+                if (scrollView != null)
+                {
+                    // 1. Check clipOffset.y first (moves as rows scroll past the initial 7 slots)
+                    if (scrollView.panel != null)
+                    {
+                        float clipY = UnityEngine.Mathf.Abs(scrollView.panel.clipOffset.y);
+                        if (clipY > 0.5f)
+                        {
+                            float rowStep = 60f;
+                            var scrollBehaviour = panel.GetComponentInChildren<ScrollBehaviour>(true);
+                            if (scrollBehaviour != null)
+                            {
+                                var rowTransforms = new System.Collections.Generic.List<Transform>();
+                                for (int i = 0; i < scrollBehaviour.transform.childCount; i++)
+                                {
+                                    var child = scrollBehaviour.transform.GetChild(i);
+                                    if (child != null && child.gameObject.name.Contains("BlueprintListPrefab", System.StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        rowTransforms.Add(child);
+                                    }
+                                }
+
+                                if (rowTransforms.Count > 1)
+                                {
+                                    float measured = UnityEngine.Mathf.Abs(rowTransforms[1].localPosition.y - rowTransforms[0].localPosition.y);
+                                    if (measured >= 10f) rowStep = measured;
+                                }
+                            }
+
+                            int offsetFromClip = UnityEngine.Mathf.FloorToInt((clipY + (rowStep * 0.25f)) / rowStep);
+                            return UnityEngine.Mathf.Clamp(offsetFromClip, 0, UnityEngine.Mathf.Max(0, totalItems - 1));
+                        }
+                    }
+
+                    // 2. Fallback to verticalScrollBar.value
+                    if (scrollView.verticalScrollBar != null && scrollView.verticalScrollBar.value > 0.0001f)
+                    {
+                        float val = UnityEngine.Mathf.Clamp01(scrollView.verticalScrollBar.value);
+                        int maxOffset = UnityEngine.Mathf.Max(0, totalItems - 1);
+                        return UnityEngine.Mathf.Clamp(
+                            UnityEngine.Mathf.RoundToInt(val * maxOffset),
+                            0,
+                            maxOffset
+                        );
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore if NGUI scroll components are unavailable
+            }
+            
+            if (_trackedFirstLineIndex > 0)
+            {
+                return UnityEngine.Mathf.Clamp(_trackedFirstLineIndex, 0, UnityEngine.Mathf.Max(0, totalItems - 1));
+            }
+            
+            return 0;
+        }
+
+        private static int FindBlueprintIndexInList(
+                    Il2CppSystem.Collections.Generic.List<BlueprintData> list,
+                    BlueprintData targetBp,
+                    int preferredIndex)
+        {
+            if (list == null || list.Count == 0)
+                return -1;
+
+            if (targetBp != null)
+            {
+                // 1. Exact object reference match first
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i] != null && ReferenceEquals(list[i], targetBp))
+                        return i;
+                }
+
+                // 2. Internal blueprint name match (e.g., distinct recipe names behind identical "Tinder Plug (2)" labels)
+                string targetInternalName = targetBp.name;
+                if (!string.IsNullOrEmpty(targetInternalName))
+                {
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var candidate = list[i];
+                        if (candidate != null && string.Equals(candidate.name, targetInternalName, System.StringComparison.Ordinal))
+                            return i;
+                    }
+                }
+            }
+
+            if (preferredIndex >= 0 && preferredIndex < list.Count)
+                return preferredIndex;
+
+            return -1;
+        }
+        private static int FindMatchingIndexNearHint(
+                    Il2CppSystem.Collections.Generic.List<BlueprintData> list,
+                    UnityEngine.Transform row,
+                    int hintIndex)
+        {
+            if (list == null || list.Count == 0 || row == null)
+                return -1;
+
+            string primaryLabel = string.Empty;
+            foreach (var lbl in row.GetComponentsInChildren<UILabel>(true))
+            {
+                if (lbl == null) continue;
+                string t = (lbl.text ?? string.Empty).Trim();
+                if (!string.IsNullOrEmpty(t))
+                {
+                    primaryLabel = t;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(primaryLabel))
+                return -1;
+
+            int count = list.Count;
+            int start = UnityEngine.Mathf.Clamp(hintIndex, 0, count - 1);
+
+            // 1. Check exact index first if it already matches this row's label
+            var directBp = list[start];
+            if (directBp != null)
+            {
+                string dDisp = (directBp.GetDisplayedNameWithCount() ?? string.Empty).Trim();
+                string dRaw = (directBp.name ?? string.Empty).Trim();
+                if (string.Equals(dDisp, primaryLabel, System.StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(dRaw, primaryLabel, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return start;
+                }
+            }
+
+            // 2. Search forward from start (no wrap-around) so scrolled duplicate-named items win
+            for (int idx = start + 1; idx < count; idx++)
+            {
+                var bp = list[idx];
+                if (bp == null) continue;
+
+                string disp = (bp.GetDisplayedNameWithCount() ?? string.Empty).Trim();
+                string raw = (bp.name ?? string.Empty).Trim();
+
+                if (string.Equals(disp, primaryLabel, System.StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(raw, primaryLabel, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return idx;
+                }
+            }
+
+            // 3. Fallback: search before start if nothing matched past start
+            for (int idx = 0; idx < start; idx++)
+            {
+                var bp = list[idx];
+                if (bp == null) continue;
+
+                string disp = (bp.GetDisplayedNameWithCount() ?? string.Empty).Trim();
+                string raw = (bp.name ?? string.Empty).Trim();
+
+                if (string.Equals(disp, primaryLabel, System.StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(raw, primaryLabel, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return idx;
+                }
+            }
+
+            return -1;
+        }
+        // Attempt to bind a click handler to a crafting row that resolves the correct blueprint index based on the current filtered list and search state
+        private static void BindRowIndexClickHandler(
+                    Panel_Crafting panel,
+                    Transform row,
+                    BlueprintData boundBlueprint,
+                    int fallbackIndex,
+                    int slotIndex,
+                    int visibleSlots,
+                    bool preferPositionalIndex)
+        {
+            if (panel == null || row == null)
                 return;
 
             var collider = row.GetComponent<UnityEngine.BoxCollider>();
@@ -340,28 +814,102 @@ namespace CraftingSearch
             listener.onClick = null;
             listener.onSelect = null;
 
-            int capturedIndex = blueprintIndex;
+            BlueprintData capturedBp = boundBlueprint;
+            int capturedFallback = fallbackIndex;
+            int capturedSlot = slotIndex;
+            int capturedVisible = visibleSlots;
+            bool capturedPreferPositional = preferPositionalIndex;
 
             listener.onClick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UIEventListener.VoidDelegate>(
                 new System.Action<UnityEngine.GameObject>((_) =>
                 {
+                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] RawOnClick fired on '{row.name}' slot={capturedSlot} search={capturedPreferPositional}");
+
                     var activeList = panel.m_FilteredBlueprints ?? panel.m_Blueprints;
-                    if (activeList != null && capturedIndex >= 0 && capturedIndex < activeList.Count)
-                    {
-                        SelectBlueprintByIndex(panel, capturedIndex);
+                    if (activeList == null || activeList.Count == 0)
                         return;
+
+                    int scrollOffset = GetCurrentScrollOffset(panel, activeList.Count, capturedVisible);
+                    int positionalIndex = capturedSlot >= 0 ? (scrollOffset + capturedSlot) : -1;
+                    int chosenIndex = -1;
+
+                    if (capturedPreferPositional)
+                    {
+                        if (scrollOffset > 0 && positionalIndex >= 0 && positionalIndex < activeList.Count)
+                        {
+                            chosenIndex = positionalIndex;
+                        }
+                        else if (capturedBp != null)
+                        {
+                            int anchor = capturedSlot >= 0 ? capturedSlot : (positionalIndex >= 0 ? positionalIndex : capturedFallback);
+                            int matchedBpIndex = FindBlueprintIndexInList(activeList, capturedBp, anchor);
+                            if (matchedBpIndex >= 0 && matchedBpIndex < activeList.Count)
+                            {
+                                chosenIndex = matchedBpIndex;
+                            }
+                        }
+
+                        if (chosenIndex < 0 && capturedSlot >= 0 && capturedSlot < activeList.Count && scrollOffset == 0)
+                        {
+                            chosenIndex = capturedSlot;
+                        }
+
+                        if (chosenIndex < 0 && positionalIndex >= 0 && positionalIndex < activeList.Count)
+                        {
+                            chosenIndex = positionalIndex;
+                        }
                     }
 
-                    int resolvedIndex = ResolveBlueprintIndexForRow(panel, row, activeList);
-                    if (resolvedIndex >= 0)
+                    if (chosenIndex < 0 && capturedFallback >= 0 && capturedFallback < activeList.Count)
                     {
-                        SelectBlueprintByIndex(panel, resolvedIndex);
+                        chosenIndex = capturedFallback;
+                    }
+
+                    if (chosenIndex < 0)
+                    {
+                        int resolvedByLabel = ResolveBlueprintIndexForRow(panel, row, activeList);
+                        if (resolvedByLabel >= 0 && resolvedByLabel < activeList.Count)
+                        {
+                            chosenIndex = resolvedByLabel;
+                        }
+                    }
+                    // If the row's current displayed label differs from activeList[chosenIndex], find the matching item near capturedSlot
+                    if (chosenIndex >= 0 && chosenIndex < activeList.Count)
+                    {
+                        string rowText = string.Empty;
+                        foreach (var lbl in row.GetComponentsInChildren<UILabel>(true))
+                        {
+                            if (lbl != null && !string.IsNullOrWhiteSpace(lbl.text))
+                            {
+                                rowText = lbl.text.Trim();
+                                break;
+                            }
+                        }
+
+                        if (!string.IsNullOrEmpty(rowText))
+                        {
+                            var currentBp = activeList[chosenIndex];
+                            string currentDisp = currentBp != null ? (currentBp.GetDisplayedNameWithCount() ?? string.Empty).Trim() : string.Empty;
+                            if (!string.Equals(currentDisp, rowText, System.StringComparison.OrdinalIgnoreCase))
+                            {
+                                int labelMatch = FindMatchingIndexNearHint(activeList, row, UnityEngine.Mathf.Max(chosenIndex, capturedSlot));
+                                if (labelMatch >= 0 && labelMatch < activeList.Count)
+                                {
+                                    chosenIndex = labelMatch;
+                                }
+                            }
+                        }
+                    }
+                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] Resolve slot={capturedSlot} count={activeList.Count} offset={scrollOffset} pos={positionalIndex} fallback={capturedFallback} -> chosen={chosenIndex}");
+
+                    if (chosenIndex >= 0 && chosenIndex < activeList.Count)
+                    {
+                        SelectBlueprintByIndex(panel, chosenIndex);
+                        panel.m_NeedsUpdate = true;
                     }
                 })
             );
         }
-
-        // Attempt to resolve the blueprint index for a given row based on its labels and the active blueprint list
         private static int ResolveBlueprintIndexForRow(
                     Panel_Crafting panel,
                     UnityEngine.Transform row,
@@ -679,35 +1227,23 @@ namespace CraftingSearch
 
             return -1;
         }
-        // Attempt to synchronize the visibility and position of blueprint list rows based on the filtered results
+        // Attempt to synchronize the visible blueprint list rows with the filtered list, adjusting labels, icons, and click handlers
         private static void SyncBlueprintListRows(Panel_Crafting panel, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
         {
             if (panel == null || filtered == null)
                 return;
 
-            var allowedNames = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < filtered.Count; i++)
-            {
-                var bp = filtered[i];
-                if (bp == null) continue;
-
-                string disp = bp.GetDisplayedNameWithCount();
-                if (!string.IsNullOrWhiteSpace(disp))
-                    allowedNames.Add(disp.Trim());
-
-                if (!string.IsNullOrWhiteSpace(bp.name))
-                    allowedNames.Add(bp.name.Trim());
-            }
-
             string query = SearchBarUI.CurrentQuery;
             bool hasQuery = !string.IsNullOrEmpty(query);
 
             var scrollBehaviour = panel.GetComponentInChildren<ScrollBehaviour>(true);
+
+            HookCraftingScrollViews(panel);
+
             if (scrollBehaviour == null)
                 return;
 
             Transform listRoot = scrollBehaviour.transform;
-
             var rowTransforms = new System.Collections.Generic.List<Transform>();
 
             for (int i = 0; i < listRoot.childCount; i++)
@@ -725,83 +1261,26 @@ namespace CraftingSearch
             if (rowTransforms.Count == 0)
                 return;
 
+            // Leave native row clicks/scrolling alone when no search filter is active
+            if (!hasQuery)
+            {
+                foreach (var row in rowTransforms)
+                {
+                    if (row != null)
+                    {
+                        row.gameObject.SetActive(true);
+                    }
+                }
+                MelonLoader.MelonLogger.Msg($"[CraftingSearch] SyncBlueprintListRows skipped custom click override (!hasQuery, rows={rowTransforms.Count}, filtered={filtered.Count})");
+                return;
+            }
+
             float topY = rowTransforms[0].localPosition.y;
             float stepY = rowTransforms.Count > 1
                 ? UnityEngine.Mathf.Abs(rowTransforms[1].localPosition.y - rowTransforms[0].localPosition.y)
                 : 64f;
             if (stepY < 1f) stepY = 64f;
 
-            var activeList = panel.m_FilteredBlueprints ?? panel.m_Blueprints;
-            int activeCount = activeList != null ? activeList.Count : -1;
-            int startIndex = GetApproxScrollListIndex(panel, activeCount);
-            
-            var usedIndices = new System.Collections.Generic.HashSet<int>();
-            var matchingRows = new System.Collections.Generic.List<Transform>();
-
-            foreach (var row in rowTransforms)
-            {
-                var rowLabels = new System.Collections.Generic.List<string>();
-                foreach (var lbl in row.GetComponentsInChildren<UILabel>(true))
-                {
-                    if (lbl == null) continue;
-                    string t = (lbl.text ?? string.Empty).Trim();
-                    if (!string.IsNullOrEmpty(t))
-                    {
-                        rowLabels.Add(t);
-                    }
-                }
-
-                int bpIndex = FindNextMatchingBlueprintIndex(activeList, rowLabels, query, hasQuery, usedIndices, startIndex);
-
-                bool rowMatches = bpIndex >= 0;
-                if (rowMatches)
-                {
-                    BindRowIndexClickHandler(panel, row, bpIndex);
-                }
-
-                row.gameObject.SetActive(rowMatches);
-                if (rowMatches)
-                {
-                    matchingRows.Add(row);
-                }
-            }
-
-            for (int i = 0; i < matchingRows.Count; i++)
-            {
-                var r = matchingRows[i];
-                var pos = r.localPosition;
-                pos.y = topY - (i * stepY);
-                r.localPosition = pos;
-            }
-
-            if (!hasQuery)
-            {
-                usedIndices = new System.Collections.Generic.HashSet<int>();
-
-                foreach (var row in rowTransforms)
-                {
-                    var rowLabels = new System.Collections.Generic.List<string>();
-                    foreach (var lbl in row.GetComponentsInChildren<UILabel>(true))
-                    {
-                        if (lbl == null) continue;
-                        string t = (lbl.text ?? string.Empty).Trim();
-                        if (!string.IsNullOrEmpty(t))
-                        {
-                            rowLabels.Add(t);
-                        }
-                    }
-
-                    int bpIndex = FindNextMatchingBlueprintIndex(activeList, rowLabels, query, false, usedIndices, startIndex);
-                    if (bpIndex >= 0)
-                    {
-                        BindRowIndexClickHandler(panel, row, bpIndex);
-                    }
-                    row.gameObject.SetActive(true);
-                }
-                return;
-            }
-
-            // When a search query is active, populate visible rows directly from the filtered list
             int visibleCount = UnityEngine.Mathf.Min(rowTransforms.Count, filtered.Count);
             for (int i = 0; i < rowTransforms.Count; i++)
             {
@@ -826,39 +1305,22 @@ namespace CraftingSearch
                     row.localPosition = pos;
 
                     row.gameObject.SetActive(true);
-                    BindRowIndexClickHandler(panel, row, i);
+                    BindRowIndexClickHandler(panel, row, bp, i, i, rowTransforms.Count, preferPositionalIndex: true);
                 }
                 else
                 {
                     row.gameObject.SetActive(false);
                 }
             }
-            
-            foreach (var sb in panel.GetComponentsInChildren<ScrollBehaviour>(true))
-            {
-                if (sb == null) continue;
-                var flags = System.Reflection.BindingFlags.Public |
-                            System.Reflection.BindingFlags.NonPublic |
-                            System.Reflection.BindingFlags.Instance;
-
-                foreach (var mName in new[] { "RefreshItems", "LayoutItems" })
-                {
-                    var m = sb.GetType().GetMethod(mName, flags);
-                    if (m != null && m.GetParameters().Length == 0)
-                    {
-                        try { m.Invoke(sb, null); } catch { }
-                    }
-                }
-            }
 
             bool allFitInView = filtered.Count <= rowTransforms.Count;
+            var flags = System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
 
             foreach (var sb in panel.GetComponentsInChildren<ScrollBehaviour>(true))
             {
                 if (sb == null) continue;
-                var flags = System.Reflection.BindingFlags.Public |
-                            System.Reflection.BindingFlags.NonPublic |
-                            System.Reflection.BindingFlags.Instance;
 
                 var rebuildMethod = sb.GetType().GetMethod("RebuildItems", flags, null, [typeof(int)], null);
                 if (rebuildMethod != null)
@@ -903,7 +1365,6 @@ namespace CraftingSearch
 
             panel.m_NeedsUpdate = true;
         }
-
         // Attempt to lock or unlock native input handling when the search bar is active
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
