@@ -1,6 +1,5 @@
 ﻿using Il2Cpp;
 using Il2CppInterop.Runtime;
-using Il2CppTLD.UI.Scroll;
 using MelonLoader;
 using UnityEngine;
 
@@ -12,81 +11,7 @@ namespace CraftingSearch
         private const int BoxHeight = 36;
         internal static UIInput SearchInput;
         private static Panel_Crafting _craftingPanel;
-        //private static Texture2D _solidTex;
-
-        // delete this method if you don't need to debug the hierarchy path of a transform
-        private static UISprite FindSpriteByPathOrName(
-            Panel_Crafting panel,
-            string requiredPathSubstring,
-            string preferredSpriteName = null)
-        {
-            if (panel == null)
-                return null;
-
-            UISprite firstMatch = null;
-            string reqLower = (requiredPathSubstring ?? string.Empty).ToLowerInvariant();
-            string prefLower = (preferredSpriteName ?? string.Empty).ToLowerInvariant();
-
-            foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
-            {
-                if (sprite == null || sprite.atlas == null || string.IsNullOrEmpty(sprite.spriteName))
-                    continue;
-
-                string path = GetHierarchyPath(sprite.transform);
-                string pathLower = path.ToLowerInvariant();
-                string spriteLower = sprite.spriteName.ToLowerInvariant();
-
-                if (!string.IsNullOrEmpty(reqLower) && !pathLower.Contains(reqLower))
-                    continue;
-
-                if (!string.IsNullOrEmpty(prefLower) && spriteLower == prefLower)
-                {
-                    MelonLogger.Msg($"Matched exact sprite '{sprite.spriteName}' at '{path}' ({sprite.width}x{sprite.height})");
-                    return sprite;
-                }
-
-                if (firstMatch == null)
-                    firstMatch = sprite;
-            }
-
-            if (firstMatch != null)
-            {
-                MelonLogger.Msg($"Matched path '{requiredPathSubstring}' -> sprite='{firstMatch.spriteName}' at '{GetHierarchyPath(firstMatch.transform)}' ({firstMatch.width}x{firstMatch.height})");
-            }
-
-            return firstMatch;
-        }
-
-        // use this method to log all the UISprite objects in the crafting panel hierarchy, which can help you find a suitable background sprite for the search box
-        //private static void LogBlueprintListSprites(Panel_Crafting panel)
-        //{
-        //    if (panel == null)
-        //        return;
-
-        //    foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
-        //    {
-        //        if (sprite == null || sprite.atlas == null || string.IsNullOrEmpty(sprite.spriteName))
-        //            continue;
-
-        //        string path = GetHierarchyPath(sprite.transform);
-        //        if (path.Contains("BlueprintList", System.StringComparison.OrdinalIgnoreCase))
-        //        {
-        //            MelonLogger.Msg($"BP sprite='{sprite.spriteName}' ({sprite.width}x{sprite.height}, type={sprite.type}) at '{path}'");
-        //        }
-        //    }
-        //}
-
-        //private static Texture2D GetSolidTexture()
-        //{
-        //    if (_solidTex != null)
-        //        return _solidTex;
-
-        //    _solidTex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-        //    _solidTex.SetPixel(0, 0, Color.white);
-        //    _solidTex.Apply();
-        //    _solidTex.hideFlags = HideFlags.HideAndDontSave;
-        //    return _solidTex;
-        //}
+        private static bool _pendingFilterRefresh;
 
         internal static string CurrentQuery =>
             SearchInput != null && SearchInput.value != null ? SearchInput.value.Trim() : string.Empty;
@@ -95,11 +20,32 @@ namespace CraftingSearch
             SearchInput != null &&
             (SearchInput.isSelected || UICamera.selectedObject == SearchInput.gameObject);
 
+        private static UISprite FindBlueprintRowBackgroundSprite(Panel_Crafting panel)
+        {
+            if (panel == null)
+                return null;
+
+            foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
+            {
+                if (sprite == null || sprite.atlas == null || string.IsNullOrEmpty(sprite.spriteName))
+                    continue;
+
+                if (sprite.gameObject.name.Equals("BG", System.StringComparison.OrdinalIgnoreCase) &&
+                    sprite.transform.parent != null &&
+                    sprite.transform.parent.name.Contains("BlueprintListPrefab", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return sprite;
+                }
+            }
+
+            return null;
+        }
+
         private static void TryGetAboveBlueprintsPosition(
-                    Panel_Crafting panel,
-                    Transform targetParent,
-                    ref float x,
-                    ref float y)
+            Panel_Crafting panel,
+            Transform targetParent,
+            ref float x,
+            ref float y)
         {
             if (panel == null || targetParent == null)
                 return;
@@ -120,13 +66,9 @@ namespace CraftingSearch
 
                     x = localHeaderPos.x + (BoxWidth * 0.5f) - (lbl.width * 0.5f);
                     y = localHeaderPos.y + yOffset;
-
-                    MelonLogger.Msg($"Positioned above '{txt}' ({objName}) at local ({x:F1}, {y:F1})");
                     return;
                 }
             }
-
-            MelonLogger.Msg($"'Blueprint' label not found; using fallback ({x:F1}, {y:F1})");
         }
 
         internal static void AttachTo(Panel_Crafting panel)
@@ -154,16 +96,14 @@ namespace CraftingSearch
             }
 
             Transform targetParent = panel.transform.childCount > 0 ? panel.transform.GetChild(0) : panel.transform;
-            MelonLogger.Msg($"Cloning '{template.transform.root.name}/{template.name}' onto '{targetParent.name}' (layer {targetParent.gameObject.layer})");
 
             GameObject clone = UnityEngine.Object.Instantiate(template.gameObject, targetParent);
             clone.name = "CraftingSearchInput";
             SetLayerRecursively(clone, targetParent.gameObject.layer);
             clone.SetActive(true);
-
             clone.transform.localScale = Vector3.one;
 
-            // Strip gameplay/localization/tween scripts across the entire cloned hierarchy so nothing overwrites our text or blocks NGUI rendering
+            // Strip gameplay/localization/tween scripts so nothing overwrites text or blocks NGUI rendering
             foreach (var mb in clone.GetComponentsInChildren<MonoBehaviour>(true))
             {
                 if (mb == null) continue;
@@ -185,15 +125,11 @@ namespace CraftingSearch
             }
 
             SearchInput = clone.GetComponent<UIInput>() ?? clone.AddComponent<UIInput>();
-
-            // Borrow a known-good font from an existing label inside Panel_Crafting
             UILabel sourceLabel = FindValidFontSource(panel);
 
-            // Tunable gray background & fallback coordinates (used only if no "Blueprints" label is found)
             float searchBoxX = 0f;
             float searchBoxY = -200f;
 
-            // Destroy any template sprites so no cloned sprite graphics remain
             foreach (var oldSprite in clone.GetComponentsInChildren<UISprite>(true))
             {
                 if (oldSprite != null)
@@ -202,15 +138,13 @@ namespace CraftingSearch
                 }
             }
 
-            //LogBlueprintListSprites(panel); // Optional debug log to help find a suitable background sprite for the search box
-
-            UISprite bpBgSource = FindSpriteByPathOrName(panel, "BlueprintListPrefab(Clone)/BG", "inv_statBack");
+            UISprite bpBgSource = FindBlueprintRowBackgroundSprite(panel);
             if (bpBgSource != null)
             {
                 GameObject bgGo = new GameObject("SearchBg");
                 bgGo.transform.SetParent(clone.transform, false);
                 bgGo.layer = clone.layer;
-                bgGo.transform.localPosition = new Vector3(0f, 0f, 0f);
+                bgGo.transform.localPosition = Vector3.zero;
                 bgGo.transform.localScale = Vector3.one;
 
                 UISprite bgSprite = bgGo.AddComponent<UISprite>();
@@ -218,17 +152,13 @@ namespace CraftingSearch
                 bgSprite.spriteName = bpBgSource.spriteName;
                 bgSprite.type = bpBgSource.type;
                 bgSprite.alpha = 1f;
-                // try to match the color of the blueprint list background, but make it slightly darker and more opaque
                 bgSprite.color = new Color(0.15f, 0.17f, 0.17f, 0.95f);
                 bgSprite.width = BoxWidth;
                 bgSprite.height = BoxHeight;
                 bgSprite.depth = 499;
                 bgSprite.MarkAsChanged();
-
-                MelonLogger.Msg($"Borrowed BP bg sprite='{bpBgSource.spriteName}' from '{GetHierarchyPath(bpBgSource.transform)}'");
             }
 
-            // Destroy the template's old label(s) so no hidden anchors or broken fonts interfere
             foreach (var oldLabel in clone.GetComponentsInChildren<UILabel>(true))
             {
                 if (oldLabel != null)
@@ -237,7 +167,6 @@ namespace CraftingSearch
                 }
             }
 
-            // Clone a known-working UILabel directly from Panel_Crafting (already has valid font/material/shader)
             UILabel label = null;
             if (sourceLabel != null)
             {
@@ -245,7 +174,6 @@ namespace CraftingSearch
                 labelGo.name = "SearchLabel";
                 SetLayerRecursively(labelGo, clone.layer);
 
-                // Strip any localization or helper scripts from the cloned label
                 foreach (var mb in labelGo.GetComponentsInChildren<MonoBehaviour>(true))
                 {
                     if (mb == null) continue;
@@ -306,8 +234,6 @@ namespace CraftingSearch
 
             TryGetAboveBlueprintsPosition(panel, targetParent, ref searchBoxX, ref searchBoxY);
             clone.transform.localPosition = new Vector3(searchBoxX, searchBoxY, -20f);
-
-            //MelonLogger.Msg($"Attached at localPos={clone.transform.localPosition}, labelActive={label.gameObject.activeInHierarchy}, hasFont={(label.bitmapFont != null || label.trueTypeFont != null)}");
         }
 
         private static UILabel FindValidFontSource(Panel_Crafting panel)
@@ -336,7 +262,6 @@ namespace CraftingSearch
         private static UIInput FindTemplateInput()
         {
             var inputs = Resources.FindObjectsOfTypeAll<UIInput>();
-            MelonLogger.Msg($"Found {inputs.Length} total UIInput objects.");
             UIInput fallback = null;
 
             for (int i = 0; i < inputs.Length; i++)
@@ -383,75 +308,6 @@ namespace CraftingSearch
             }
         }
 
-        //private static UISprite FindBlueprintsBackgroundSource(Panel_Crafting panel)
-        //{
-        //    if (panel == null)
-        //        return null;
-
-        //    UISprite bestCandidate = null;
-        //    int bestArea = -1;
-
-        //    foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
-        //    {
-        //        if (sprite == null || sprite.atlas == null || string.IsNullOrEmpty(sprite.spriteName))
-        //            continue;
-
-        //        string path = GetHierarchyPath(sprite.transform).ToLowerInvariant();
-        //        string nameLower = sprite.gameObject.name.ToLowerInvariant();
-        //        string spriteLower = sprite.spriteName.ToLowerInvariant();
-
-        //        // Skip icons, checkmarks, dividers, and scrollbars
-        //        if (nameLower.Contains("icon") || nameLower.Contains("check") || nameLower.Contains("arrow") ||
-        //            nameLower.Contains("divider") || nameLower.Contains("line") || nameLower.Contains("scroll") ||
-        //            spriteLower.Contains("icon") || spriteLower.Contains("check") || spriteLower.Contains("arrow"))
-        //        {
-        //            continue;
-        //        }
-
-        //        // Skip tiny sprites so we don't grab small badges or icons
-        //        if (sprite.width < 120 || sprite.height < 24)
-        //            continue;
-
-        //        bool inCraftingOrBlueprints = path.Contains("blueprint") || path.Contains("craftingsection") || path.Contains("blueprintlist");
-        //        int area = sprite.width * sprite.height + (inCraftingOrBlueprints ? 1_000_000 : 0);
-
-        //        if (area > bestArea)
-        //        {
-        //            bestArea = area;
-        //            bestCandidate = sprite;
-        //        }
-        //    }
-
-        //    if (bestCandidate != null)
-        //        return bestCandidate;
-
-        //    foreach (var sprite in panel.GetComponentsInChildren<UISprite>(true))
-        //    {
-        //        if (sprite != null && sprite.atlas != null && !string.IsNullOrEmpty(sprite.spriteName))
-        //            return sprite;
-        //    }
-
-        //    return null;
-        //}
-
-        private static string GetHierarchyPath(Transform t)
-        {
-            if (t == null)
-                return string.Empty;
-
-            System.Collections.Generic.List<string> parts = new System.Collections.Generic.List<string>();
-            Transform curr = t;
-            while (curr != null)
-            {
-                parts.Add(curr.name);
-                curr = curr.parent;
-            }
-            parts.Reverse();
-            return string.Join("/", parts);
-        }
-
-        private static bool _pendingFilterRefresh;
-
         private static void OnSearchTextChanged()
         {
             string current = SearchInput != null && SearchInput.value != null ? SearchInput.value : string.Empty;
@@ -472,9 +328,6 @@ namespace CraftingSearch
                 _pendingFilterRefresh = true;
                 MelonCoroutines.Start(RefreshFilterNextFrame());
             }
-
-            MelonLogger.Msg($"OnSearchTextChanged -> '{current}'");
-
         }
 
         private static System.Collections.IEnumerator RefreshFilterNextFrame()
@@ -486,67 +339,6 @@ namespace CraftingSearch
                 yield break;
 
             _craftingPanel.ApplyFilter();
-            _craftingPanel.RefreshAvailableBlueprints();
-
-            foreach (var scrollBehaviour in _craftingPanel.GetComponentsInChildren<ScrollBehaviour>(true))
-            {
-                if (scrollBehaviour != null)
-                {
-                    try
-                    {
-                        scrollBehaviour.enabled = true;
-                        scrollBehaviour.SendMessage("Refresh", UnityEngine.SendMessageOptions.DontRequireReceiver);
-                        scrollBehaviour.SendMessage("Update", UnityEngine.SendMessageOptions.DontRequireReceiver);
-                    }
-                    catch
-                    {
-                        // Safe if IL2CPP method/message isn't exposed
-                    }
-                }
-            }
-            
-            foreach (var scrollView in _craftingPanel.GetComponentsInChildren<UIScrollView>(true))
-            {
-                if (scrollView != null)
-                {
-                    scrollView.InvalidateBounds();
-                    scrollView.UpdateScrollbars(true);
-                    scrollView.RestrictWithinBounds(true, false, true);
-                }
-            }
-
-            foreach (var grid in _craftingPanel.GetComponentsInChildren<UIGrid>(true))
-            {
-                if (grid != null)
-                {
-                    grid.repositionNow = true;
-                    grid.Reposition();
-                }
-            }
-
-            foreach (var table in _craftingPanel.GetComponentsInChildren<UITable>(true))
-            {
-                if (table != null)
-                {
-                    table.repositionNow = true;
-                    table.Reposition();
-                }
-            }
-
-            foreach (var uiPanel in _craftingPanel.GetComponentsInChildren<UIPanel>(true))
-            {
-                if (uiPanel != null)
-                {
-                    try
-                    {
-                        uiPanel.SetDirty();
-                    }
-                    catch
-                    {
-                        // Safe if stripped or non-public in this IL2CPP build
-                    }
-                }
-            }
         }
     }
 }

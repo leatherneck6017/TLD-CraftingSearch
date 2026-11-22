@@ -72,7 +72,6 @@ namespace CraftingSearch
                     }
                 }
                 
-                LogPanelFields(__instance);
 
                 if (__instance.gameObject != null && __instance.IsEnabled())
                 {
@@ -103,8 +102,6 @@ namespace CraftingSearch
                     }
                 }
             }
-
-            MelonLoader.MelonLogger.Msg($"[CraftingSearch] ApplyFilter_Postfix query='{query}' count {beforeCount} -> {filtered.Count}");
 
             __instance.m_NeedsUpdate = true;
 
@@ -275,46 +272,6 @@ namespace CraftingSearch
             }
         }
 
-        private static bool _loggedIconInfo;
-
-        // HELPER: Attempt to log diagnostic information about the icon sprite and blueprint data for a given row
-        private static void LogIconDiagnostic(Transform row, BlueprintData bp)
-        {
-            if (_loggedIconInfo || row == null || bp == null)
-                return;
-
-            _loggedIconInfo = true;
-            MelonLoader.MelonLogger.Msg($"[CraftingSearch] IconDiag bp.name='{bp.name}' disp='{bp.GetDisplayedNameWithCount()}'");
-
-            var flags = System.Reflection.BindingFlags.Public |
-                        System.Reflection.BindingFlags.NonPublic |
-                        System.Reflection.BindingFlags.Instance;
-
-            foreach (var p in typeof(BlueprintData).GetProperties(flags))
-            {
-                if (p.GetIndexParameters().Length > 0) continue;
-                object val = null;
-                try { val = p.GetValue(bp); } catch { }
-                string valStr = val != null ? val.ToString() : "null";
-                MelonLoader.MelonLogger.Msg($"[CraftingSearch]   bp prop {p.Name} ({p.PropertyType.Name}) = {valStr}");
-            }
-
-            foreach (var f in typeof(BlueprintData).GetFields(flags))
-            {
-                object val = null;
-                try { val = f.GetValue(bp); } catch { }
-                string valStr = val != null ? val.ToString() : "null";
-                MelonLoader.MelonLogger.Msg($"[CraftingSearch]   bp field {f.Name} ({f.FieldType.Name}) = {valStr}");
-            }
-
-            foreach (var tex in row.GetComponentsInChildren<UITexture>(true))
-            {
-                if (tex == null) continue;
-                string mTexName = tex.mainTexture != null ? tex.mainTexture.name : "null";
-                MelonLoader.MelonLogger.Msg($"[CraftingSearch]   row UITexture '{tex.gameObject.name}' mainTexture='{mTexName}'");
-            }
-        }
-
         // HELPER: Attempt to select a blueprint by index, with fallback to refresh the list and re-select if necessary
         private static void SelectBlueprintByIndex(Panel_Crafting panel, int blueprintIndex)
         {
@@ -330,7 +287,6 @@ namespace CraftingSearch
                 BlueprintData bp = list[blueprintIndex];
                 string selectedDisp = bp != null ? (bp.GetDisplayedNameWithCount() ?? string.Empty).Trim() : string.Empty;
                 string selectedRaw = bp != null ? (bp.name ?? string.Empty).Trim() : string.Empty;
-                MelonLoader.MelonLogger.Msg($"[CraftingSearch] Selected blueprint idx={blueprintIndex} raw='{selectedRaw}' disp='{selectedDisp}'");
 
                 panel.RefreshSelectedBlueprint(blueprintIndex);
                 panel.m_NeedsUpdate = true;
@@ -723,29 +679,6 @@ namespace CraftingSearch
 
             return -1;
         }
-        // Debugging utility to log all tinder-related indices in the active blueprint list
-        private static bool _loggedTinderIndices;
-        // 
-        private static void LogTinderIndices(Il2CppSystem.Collections.Generic.List<BlueprintData> list)
-        {
-            if (_loggedTinderIndices || list == null)
-                return;
-
-            _loggedTinderIndices = true;
-            for (int i = 0; i < list.Count; i++)
-            {
-                var bp = list[i];
-                if (bp == null) continue;
-
-                string disp = bp.GetDisplayedNameWithCount() ?? string.Empty;
-                string raw = bp.name ?? string.Empty;
-                if (disp.Contains("tinder", System.StringComparison.OrdinalIgnoreCase) ||
-                    raw.Contains("tinder", System.StringComparison.OrdinalIgnoreCase))
-                {
-                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] activeList[{i}] raw='{raw}' disp='{disp}'");
-                }
-            }
-        }
         // Attempt to synchronize the visibility and position of blueprint list rows based on the filtered results
         private static void SyncBlueprintListRows(Panel_Crafting panel, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
         {
@@ -801,8 +734,6 @@ namespace CraftingSearch
             var activeList = panel.m_FilteredBlueprints ?? panel.m_Blueprints;
             int activeCount = activeList != null ? activeList.Count : -1;
             int startIndex = GetApproxScrollListIndex(panel, activeCount);
-            LogTinderIndices(activeList);
-            MelonLoader.MelonLogger.Msg($"[CraftingSearch] Sync rows={rowTransforms.Count}, activeList={activeCount}, query='{query}'");
             
             var usedIndices = new System.Collections.Generic.HashSet<int>();
             var matchingRows = new System.Collections.Generic.List<Transform>();
@@ -821,17 +752,6 @@ namespace CraftingSearch
                 }
 
                 int bpIndex = FindNextMatchingBlueprintIndex(activeList, rowLabels, query, hasQuery, usedIndices, startIndex);
-
-                //if (!hasQuery)
-                //{
-                //    if (bpIndex >= 0)
-                //    {
-                //        BindRowIndexClickHandler(panel, row, bpIndex);
-                //    }
-                //    row.gameObject.SetActive(true);
-                //    matchingRows.Add(row);
-                //    continue;
-                //}
 
                 bool rowMatches = bpIndex >= 0;
                 if (rowMatches)
@@ -892,10 +812,6 @@ namespace CraftingSearch
                 {
                     BlueprintData bp = filtered[i];
                     string disp = bp != null ? (bp.GetDisplayedNameWithCount() ?? bp.name ?? string.Empty).Trim() : string.Empty;
-                    if (i == 0)
-                    {
-                        LogIconDiagnostic(row, bp);
-                    }
                     var labels = row.GetComponentsInChildren<UILabel>(true);
                     if (labels != null && labels.Length > 0 && !string.IsNullOrEmpty(disp))
                     {
@@ -918,8 +834,6 @@ namespace CraftingSearch
                 }
             }
             
-            LogScrollBehaviourMethods(scrollBehaviour);
-
             foreach (var sb in panel.GetComponentsInChildren<ScrollBehaviour>(true))
             {
                 if (sb == null) continue;
@@ -1061,70 +975,6 @@ namespace CraftingSearch
             catch (System.Exception ex)
             {
                 MelonLoader.MelonLogger.Warning($"[CraftingSearch] Rewired lock error: {ex.Message}");
-            }
-        }
-
-        // Debugging utility to log all fields of Panel_Crafting that may be relevant to crafting lists
-        //private static void LogListFields(Panel_Crafting panel)
-        //{
-        //    var flags = System.Reflection.BindingFlags.Public |
-        //                System.Reflection.BindingFlags.NonPublic |
-        //                System.Reflection.BindingFlags.Instance;
-
-        //    foreach (var field in typeof(Panel_Crafting).GetFields(flags))
-        //    {
-        //        string fName = field.Name;
-        //        if (fName.Contains("Blueprint", System.StringComparison.OrdinalIgnoreCase) ||
-        //            fName.Contains("List", System.StringComparison.OrdinalIgnoreCase) ||
-        //            fName.Contains("Scroll", System.StringComparison.OrdinalIgnoreCase) ||
-        //            fName.Contains("Item", System.StringComparison.OrdinalIgnoreCase))
-        //        {
-        //            MelonLoader.MelonLogger.Msg($"[CraftingSearch] Panel_Crafting field: {fName} ({field.FieldType.Name})");
-        //        }
-        //    }
-        //}
-        // 
-        private static bool _loggedFields;
-
-        private static void LogPanelFields(Panel_Crafting panel)
-        {
-            if (_loggedFields || panel == null)
-                return;
-
-            _loggedFields = true;
-            var flags = System.Reflection.BindingFlags.Public |
-                        System.Reflection.BindingFlags.NonPublic |
-                        System.Reflection.BindingFlags.Instance;
-
-            foreach (var field in typeof(Panel_Crafting).GetFields(flags))
-            {
-                string fName = field.Name;
-                if (fName.Contains("Blueprint", System.StringComparison.OrdinalIgnoreCase) ||
-                    fName.Contains("List", System.StringComparison.OrdinalIgnoreCase) ||
-                    fName.Contains("Scroll", System.StringComparison.OrdinalIgnoreCase) ||
-                    fName.Contains("Filter", System.StringComparison.OrdinalIgnoreCase))
-                {
-                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] Panel_Crafting field: {fName} ({field.FieldType.Name})");
-                }
-            }
-        }
-
-        private static bool _loggedScrollMethods;
-
-        private static void LogScrollBehaviourMethods(ScrollBehaviour sb)
-        {
-            if (_loggedScrollMethods || sb == null)
-                return;
-
-            _loggedScrollMethods = true;
-            var flags = System.Reflection.BindingFlags.Public |
-                        System.Reflection.BindingFlags.NonPublic |
-                        System.Reflection.BindingFlags.Instance;
-
-            foreach (var m in sb.GetType().GetMethods(flags))
-            {
-                var parms = string.Join(", ", System.Array.ConvertAll(m.GetParameters(), p => $"{p.ParameterType.Name} {p.Name}"));
-                MelonLoader.MelonLogger.Msg($"[CraftingSearch] ScrollBehaviour.{m.Name}({parms})");
             }
         }
     }
