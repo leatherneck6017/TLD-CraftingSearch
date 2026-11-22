@@ -225,7 +225,7 @@ namespace CraftingSearch
             label.color = Color.white;
             label.pivot = UIWidget.Pivot.Left;
             label.alignment = NGUIText.Alignment.Left;
-            label.overflowMethod = UILabel.Overflow.ResizeFreely;
+            label.overflowMethod = UILabel.Overflow.ClampContent;
             label.maxLineCount = 1;
             label.width = 280; // adjust width to fit within the box, taking into account the 'x' button and padding
             label.height = 34;
@@ -331,8 +331,8 @@ namespace CraftingSearch
                 lbl.enabled = true;
                 lbl.alpha = 1f;
                 lbl.color = Color.white;
-                lbl.text = string.IsNullOrEmpty(current) ? (SearchInput.defaultText ?? string.Empty) : current;
-                lbl.MarkAsChanged();
+                //lbl.text = string.IsNullOrEmpty(current) ? (SearchInput.defaultText ?? string.Empty) : current;
+                //lbl.MarkAsChanged();
             }
 
             if (!_pendingFilterRefresh)
