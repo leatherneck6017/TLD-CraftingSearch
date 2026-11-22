@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<!--This is the .NET version the mod will be compiled with. Don't change it.-->
@@ -16,6 +16,7 @@
 	<PropertyGroup>
 		<!--This needs to be changed to your The Long Dark installation path for the mod to compile.-->
 		<TLDPath>E:\SteamLibrary\steamapps\common\TheLongDark</TLDPath>
+		<!--<RunPostBuildEvent>OnBuildSuccess</RunPostBuildEvent>-->
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
@@ -31,8 +32,6 @@
 		</Reference>
 	</ItemGroup>
 
-	<Target Name="PostBuild" AfterTargets="PostBuildEvent">
-		<Exec Command="copy /Y &quot;$(TargetPath)&quot; &quot;$(TLDPath)\Mods\&quot;" />
-	</Target>
+	<Import Project="BuildActions.targets"/>
 
 </Project>

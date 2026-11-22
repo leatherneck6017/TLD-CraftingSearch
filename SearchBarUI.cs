@@ -63,22 +63,34 @@ namespace CraftingSearch
                 {
                     Vector3 localHeaderPos = targetParent.InverseTransformPoint(lbl.transform.position);
                     float yOffset = (lbl.height * 0.5f) + (BoxHeight * 0.5f) + 12f;
+                    const float rightNudgeX = 8f; // Adjust ~10f–30f to taste
 
-                    x = localHeaderPos.x + (BoxWidth * 0.5f) - (lbl.width * 0.5f);
+                    x = localHeaderPos.x + (BoxWidth * 0.5f) - (lbl.width * 0.5f) + rightNudgeX;
                     y = localHeaderPos.y + yOffset;
                     return;
                 }
             }
         }
 
+        // Main search bar creation and attachment logic. This is called when the crafting panel is opened.
         internal static void AttachTo(Panel_Crafting panel)
         {
             _craftingPanel = panel;
-
+            // If the search input already exists, just reset it and ensure it's active
             if (SearchInput != null)
             {
                 SearchInput.gameObject.SetActive(true);
                 SearchInput.value = string.Empty;
+
+                Transform existingParent = SearchInput.transform.parent;
+                if (existingParent != null)
+                {
+                    float rx = SearchInput.transform.localPosition.x;
+                    float ry = SearchInput.transform.localPosition.y;
+                    TryGetAboveBlueprintsPosition(panel, existingParent, ref rx, ref ry);
+                    SearchInput.transform.localPosition = new Vector3(rx, ry, SearchInput.transform.localPosition.z);
+                }
+
                 if (SearchInput.label != null)
                 {
                     SearchInput.label.gameObject.SetActive(true);
@@ -215,11 +227,11 @@ namespace CraftingSearch
             label.alignment = NGUIText.Alignment.Left;
             label.overflowMethod = UILabel.Overflow.ResizeFreely;
             label.maxLineCount = 1;
-            label.width = 296;
+            label.width = 280; // adjust width to fit within the box, taking into account the 'x' button and padding
             label.height = 34;
-            label.depth = 500;
+            label.depth = 500; // depth should be higher than the background sprite to ensure it's visible
             label.transform.localScale = Vector3.one;
-            label.transform.localPosition = new Vector3(-148f, 0f, -2f);
+            label.transform.localPosition = new Vector3(-144f, 0f, -2f); // position the label to the left side of the box, with some padding
             label.text = "Search blueprints...";
             label.MarkAsChanged();
 

@@ -387,7 +387,7 @@ namespace CraftingSearch
                 return;
 
             _lastScrollLogTime[methodName] = now;
-            MelonLoader.MelonLogger.Msg($"[CraftingSearch] ScrollBehaviour.{methodName} invoked (firstLine={_trackedFirstLineIndex})");
+            // DEBUG //MelonLoader.MelonLogger.Msg($"[CraftingSearch] ScrollBehaviour.{methodName} invoked (firstLine={_trackedFirstLineIndex})");
         }
         private static readonly System.Collections.Generic.Dictionary<string, int> _lastIndexByBaseName =
             new System.Collections.Generic.Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
@@ -1271,7 +1271,7 @@ namespace CraftingSearch
                         row.gameObject.SetActive(true);
                     }
                 }
-                MelonLoader.MelonLogger.Msg($"[CraftingSearch] SyncBlueprintListRows skipped custom click override (!hasQuery, rows={rowTransforms.Count}, filtered={filtered.Count})");
+                // DEBUG //MelonLoader.MelonLogger.Msg($"[CraftingSearch] SyncBlueprintListRows skipped custom click override (!hasQuery, rows={rowTransforms.Count}, filtered={filtered.Count})");
                 return;
             }
 
