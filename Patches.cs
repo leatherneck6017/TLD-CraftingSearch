@@ -12,6 +12,7 @@ namespace CraftingSearch
         private static bool _wasTyping;
         private static bool _hadSearchQuery = false;
         private static bool _scrollBehaviourPatched;
+        private static bool _pendingTabFocus;
 
         private static void EnsureScrollBehaviourPatched()
         {
@@ -1438,8 +1439,46 @@ namespace CraftingSearch
         // Attempt to lock or unlock native input handling when the search bar is active
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
-        private static bool Update_Prefix()
+        private static bool Update_Prefix(Panel_Crafting __instance)
         {
+            var searchInput = SearchBarUI.SearchInput;
+
+            if (_pendingTabFocus)
+            {
+                _pendingTabFocus = false;
+                if (searchInput != null && __instance != null && __instance.IsEnabled())
+                {
+                    searchInput.isSelected = true;
+                    if (UICamera.currentCamera != null || UICamera.mainCamera != null)
+                    {
+                        UICamera.selectedObject = searchInput.gameObject;
+                    }
+                }
+            }
+
+            if (searchInput != null && __instance != null && __instance.IsEnabled() &&
+                UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Tab))
+            {
+                if (!searchInput.isSelected)
+                {
+                    searchInput.isSelected = true;
+                    _pendingTabFocus = true;
+                    if (UICamera.currentCamera != null || UICamera.mainCamera != null)
+                    {
+                        UICamera.selectedObject = searchInput.gameObject;
+                    }
+                }
+                else
+                {
+                    searchInput.isSelected = false;
+                    _pendingTabFocus = false;
+                    if (UICamera.selectedObject == searchInput.gameObject)
+                    {
+                        UICamera.selectedObject = null;
+                    }
+                }
+            }
+            
             bool isTyping = SearchBarUI.IsTyping;
             if (isTyping != _wasTyping)
             {
@@ -1449,7 +1488,7 @@ namespace CraftingSearch
 
             if (isTyping)
             {
-                if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Escape) ||
+                if (//UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Escape) ||
                     UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Return) ||
                     UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.KeypadEnter))
                 {
