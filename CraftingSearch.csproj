@@ -32,6 +32,10 @@
 		</Reference>
 	</ItemGroup>
 
-	<Import Project="BuildActions.targets"/>
+	<ItemGroup>
+	  <Compile Remove="PatchesOLD.cs" />
+	</ItemGroup>
+
+	<Import Project="BuildActions.targets" />
 
 </Project>

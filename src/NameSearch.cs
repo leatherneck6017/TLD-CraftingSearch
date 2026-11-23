@@ -1,4 +1,3 @@
-﻿using HarmonyLib;
 using Il2Cpp;
 using Il2CppTLD.Gear;
 using Il2CppTLD.UI.Scroll;
@@ -6,15 +5,22 @@ using UnityEngine;
 
 namespace CraftingSearch
 {
-    [HarmonyPatch(typeof(Panel_Crafting))]
-    internal static class Panel_Crafting_Patches
+    internal static class NameSearch
     {
-        private static bool _wasTyping;
         private static bool _hadSearchQuery = false;
-        private static bool _scrollBehaviourPatched;
-        private static bool _pendingTabFocus;
+        private static bool _scrollBehaviourPatched = false;
+        private static int _trackedFirstLineIndex = 0;
 
-        private static void EnsureScrollBehaviourPatched()
+        private static readonly System.Collections.Generic.Dictionary<string, float> _lastScrollLogTime =
+            new System.Collections.Generic.Dictionary<string, float>();
+
+        private static readonly System.Collections.Generic.Dictionary<string, int> _lastIndexByBaseName =
+            new System.Collections.Generic.Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
+
+        private static readonly System.Collections.Generic.HashSet<int> _hookedScrollViews =
+            new System.Collections.Generic.HashSet<int>();
+
+        internal static void EnsureScrollBehaviourPatched()
         {
             if (_scrollBehaviourPatched)
                 return;
@@ -23,48 +29,21 @@ namespace CraftingSearch
             var harmony = new HarmonyLib.Harmony("leatherneck6017.CraftingSearch.ScrollBehaviour");
             PatchScrollBehaviourScroll(harmony);
         }
-        
-        [HarmonyPrefix]
-        [HarmonyPatch(nameof(Panel_Crafting.Enable), [typeof(bool), typeof(bool)])]
-        private static bool Enable_Prefix(bool enable)
-        {
-            if (!enable && SearchBarUI.IsTyping)
-            {
-                return false;
-            }
-            return true;
-        }
 
-        [HarmonyPostfix]
-        [HarmonyPatch(nameof(Panel_Crafting.Enable), [typeof(bool), typeof(bool)])]
-        private static void Enable_Postfix(Panel_Crafting __instance, bool enable)
+        internal static void ApplySearchFilter(Panel_Crafting __instance)
         {
-            if (enable)
-            {
-                EnsureScrollBehaviourPatched();
-                SearchBarUI.AttachTo(__instance);
-            }
-            else
-            {
-                SetNativeInputLock(false);
-                _wasTyping = false;
-                SearchBarUI.Clear();
-            }
-        }
+            if (__instance == null)
+                return;
 
-        [HarmonyPostfix]
-        [HarmonyPatch(nameof(Panel_Crafting.ApplyFilter))]
-        private static void ApplyFilter_Postfix(Panel_Crafting __instance)
-        {
             _lastIndexByBaseName.Clear();
-            _trackedFirstLineIndex = 0; 
+            _trackedFirstLineIndex = 0;
             string query = SearchBarUI.CurrentQuery;
             var filtered = __instance.m_FilteredBlueprints;
             bool isQueryEmpty = string.IsNullOrEmpty(query);
             bool queryJustCleared = _hadSearchQuery && isQueryEmpty;
             _hadSearchQuery = !isQueryEmpty;
 
-            if (queryJustCleared && filtered.Count == 0 && __instance.m_Blueprints != null && __instance.m_Blueprints.Count > 0)
+            if (queryJustCleared && filtered != null && filtered.Count == 0 && __instance.m_Blueprints != null && __instance.m_Blueprints.Count > 0)
             {
                 filtered.Clear();
                 for (int i = 0; i < __instance.m_Blueprints.Count; i++)
@@ -95,9 +74,12 @@ namespace CraftingSearch
 
             RestoreCategoryBlueprintsIfEmpty(__instance, filtered, query);
 
-            int beforeCount = filtered.Count;
+            //bool isIngredientOnly = IngredientSearch.TryParseIngredientQualifier(query, out string ingredientTerm);
 
-            if (!string.IsNullOrEmpty(query))
+            SearchMode mode = IngredientSearch.ParseQuery(query, out string searchTerm);
+            bool hasEffectiveQuery = !string.IsNullOrEmpty(searchTerm);
+
+            if (hasEffectiveQuery)
             {
                 for (int i = filtered.Count - 1; i >= 0; i--)
                 {
@@ -108,46 +90,23 @@ namespace CraftingSearch
                         continue;
                     }
 
-                    string disp = bp.GetDisplayedNameWithCount() ?? string.Empty;
-                    string raw = bp.name ?? string.Empty;
-                    bool matches = disp.Contains(query, System.StringComparison.OrdinalIgnoreCase) ||
-                                   raw.Contains(query, System.StringComparison.OrdinalIgnoreCase);
+                    bool nameMatches = (bp.GetDisplayedNameWithCount() ?? string.Empty).Contains(searchTerm, System.StringComparison.OrdinalIgnoreCase) ||
+                                       (bp.name ?? string.Empty).Contains(searchTerm, System.StringComparison.OrdinalIgnoreCase);
+
+                    bool matches = mode switch
+                    {
+                        SearchMode.NameOnly => nameMatches,
+                        SearchMode.IngredientOnly => IngredientSearch.MatchesAnyIngredient(bp, searchTerm),
+                        _ => nameMatches || IngredientSearch.MatchesAnyIngredient(bp, searchTerm)
+                    };
 
                     if (!matches)
                     {
                         filtered.RemoveAt(i);
                     }
                 }
-                
 
-                if (__instance.gameObject != null && __instance.IsEnabled())
-                {
-                    foreach (var grid in __instance.GetComponentsInChildren<UIGrid>(true))
-                    {
-                        if (grid != null)
-                        {
-                            grid.repositionNow = true;
-                            grid.Reposition();
-                        }
-                    }
-
-                    foreach (var table in __instance.GetComponentsInChildren<UITable>(true))
-                    {
-                        if (table != null)
-                        {
-                            table.repositionNow = true;
-                            table.Reposition();
-                        }
-                    }
-
-                    foreach (var scrollView in __instance.GetComponentsInChildren<UIScrollView>(true))
-                    {
-                        if (scrollView != null)
-                        {
-                            scrollView.UpdateScrollbars(true);
-                        }
-                    }
-                }
+                RepositionCraftingWidgets(__instance);
             }
 
             __instance.m_NeedsUpdate = true;
@@ -162,43 +121,44 @@ namespace CraftingSearch
                 try { refreshAvail.Invoke(__instance, null); } catch { }
             }
 
-            if (__instance.gameObject != null && __instance.IsEnabled())
-            {
-                foreach (var grid in __instance.GetComponentsInChildren<UIGrid>(true))
-                {
-                    if (grid != null)
-                    {
-                        grid.repositionNow = true;
-                        grid.Reposition();
-                    }
-                }
+            RepositionCraftingWidgets(__instance);
 
-                foreach (var table in __instance.GetComponentsInChildren<UITable>(true))
-                {
-                    if (table != null)
-                    {
-                        table.repositionNow = true;
-                        table.Reposition();
-                    }
-                }
-
-                foreach (var scrollView in __instance.GetComponentsInChildren<UIScrollView>(true))
-                {
-                    if (scrollView != null)
-                    {
-                        scrollView.UpdateScrollbars(true);
-                    }
-                }
-            }
-            // check to see if the search query is non-empty and the filtered list is empty, indicating no matches
-            bool noSearchMatches = !string.IsNullOrEmpty(query) && filtered.Count == 0;
+            bool noSearchMatches = hasEffectiveQuery && filtered.Count == 0;
             SetDetailPaneBlank(__instance, noSearchMatches);
-
             RefreshCraftingScrollList(__instance, filtered);
         }
 
-        private static readonly System.Collections.Generic.Dictionary<string, float> _lastScrollLogTime =
-                    new System.Collections.Generic.Dictionary<string, float>();
+        private static void RepositionCraftingWidgets(Panel_Crafting panel)
+        {
+            if (panel == null || panel.gameObject == null || !panel.IsEnabled())
+                return;
+
+            foreach (var grid in panel.GetComponentsInChildren<UIGrid>(true))
+            {
+                if (grid != null)
+                {
+                    grid.repositionNow = true;
+                    grid.Reposition();
+                }
+            }
+
+            foreach (var table in panel.GetComponentsInChildren<UITable>(true))
+            {
+                if (table != null)
+                {
+                    table.repositionNow = true;
+                    table.Reposition();
+                }
+            }
+
+            foreach (var scrollView in panel.GetComponentsInChildren<UIScrollView>(true))
+            {
+                if (scrollView != null)
+                {
+                    scrollView.UpdateScrollbars(true);
+                }
+            }
+        }
 
         private static void RestoreCategoryBlueprintsIfEmpty(
             Panel_Crafting panel,
@@ -286,7 +246,7 @@ namespace CraftingSearch
                 filtered.Add(bp);
             }
         }
-        
+
         private static void PatchScrollBehaviourScroll(HarmonyLib.Harmony harmony)
         {
             if (harmony == null)
@@ -298,7 +258,7 @@ namespace CraftingSearch
                         System.Reflection.BindingFlags.DeclaredOnly;
 
             var sbType = typeof(ScrollBehaviour);
-            var postfixMethod = typeof(Panel_Crafting_Patches).GetMethod(
+            var postfixMethod = typeof(NameSearch).GetMethod(
                 nameof(ScrollBehaviourAnyMethod_Postfix),
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
 
@@ -329,7 +289,6 @@ namespace CraftingSearch
                 }
             }
         }
-        private static int _trackedFirstLineIndex = 0;
 
         private static int ReadScrollBehaviourFirstLine(ScrollBehaviour sb)
         {
@@ -386,16 +345,13 @@ namespace CraftingSearch
                     panel.m_NeedsUpdate = true;
                 }
             }
-            
+
             float now = UnityEngine.Time.unscaledTime;
             if (_lastScrollLogTime.TryGetValue(methodName, out float lastTime) && (now - lastTime) < 2.0f)
                 return;
 
             _lastScrollLogTime[methodName] = now;
-            // DEBUG //MelonLoader.MelonLogger.Msg($"[CraftingSearch] ScrollBehaviour.{methodName} invoked (firstLine={_trackedFirstLineIndex})");
         }
-        private static readonly System.Collections.Generic.Dictionary<string, int> _lastIndexByBaseName =
-            new System.Collections.Generic.Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
 
         private static string StripTrailingCount(string text)
         {
@@ -414,7 +370,7 @@ namespace CraftingSearch
             }
             return trimmed;
         }
-        // Attempt to synchronize the icon sprite of a crafting row with the corresponding blueprint data
+
         private static void SyncRowIcon(Transform row, BlueprintData bp)
         {
             if (row == null || bp == null)
@@ -462,9 +418,6 @@ namespace CraftingSearch
             }
         }
 
-        private static readonly System.Collections.Generic.HashSet<int> _hookedScrollViews =
-            new System.Collections.Generic.HashSet<int>();
-
         private static void HookCraftingScrollViews(Panel_Crafting panel)
         {
             if (panel == null)
@@ -497,7 +450,6 @@ namespace CraftingSearch
             }
         }
 
-        // HELPER: Attempt to refresh the crafting scroll list and re-select the first matching blueprint if available
         private static void RefreshCraftingScrollList(Panel_Crafting panel, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
         {
             if (panel == null)
@@ -541,7 +493,6 @@ namespace CraftingSearch
                 }
 
                 SyncBlueprintListRows(panel, filtered);
-
             }
 
             foreach (var widget in panel.GetComponentsInChildren<UIWidget>(true))
@@ -554,6 +505,7 @@ namespace CraftingSearch
                 }
             }
         }
+
         private static void SelectBlueprintByIndex(Panel_Crafting panel, int blueprintIndex)
         {
             if (panel == null || blueprintIndex < 0)
@@ -613,6 +565,7 @@ namespace CraftingSearch
                 // Ignore if IL2CPP signature or state doesn't match
             }
         }
+
         private static int GetCurrentScrollOffset(Panel_Crafting panel, int totalItems, int visibleSlots)
         {
             if (panel == null || totalItems <= 1)
@@ -623,7 +576,6 @@ namespace CraftingSearch
                 var scrollView = panel.GetComponentInChildren<UIScrollView>(true);
                 if (scrollView != null)
                 {
-                    // 1. Check clipOffset.y first (moves as rows scroll past the initial 7 slots)
                     if (scrollView.panel != null)
                     {
                         float clipY = UnityEngine.Mathf.Abs(scrollView.panel.clipOffset.y);
@@ -655,7 +607,6 @@ namespace CraftingSearch
                         }
                     }
 
-                    // 2. Fallback to verticalScrollBar.value
                     if (scrollView.verticalScrollBar != null && scrollView.verticalScrollBar.value > 0.0001f)
                     {
                         float val = UnityEngine.Mathf.Clamp01(scrollView.verticalScrollBar.value);
@@ -672,33 +623,31 @@ namespace CraftingSearch
             {
                 // Ignore if NGUI scroll components are unavailable
             }
-            
+
             if (_trackedFirstLineIndex > 0)
             {
                 return UnityEngine.Mathf.Clamp(_trackedFirstLineIndex, 0, UnityEngine.Mathf.Max(0, totalItems - 1));
             }
-            
+
             return 0;
         }
 
         private static int FindBlueprintIndexInList(
-                    Il2CppSystem.Collections.Generic.List<BlueprintData> list,
-                    BlueprintData targetBp,
-                    int preferredIndex)
+            Il2CppSystem.Collections.Generic.List<BlueprintData> list,
+            BlueprintData targetBp,
+            int preferredIndex)
         {
             if (list == null || list.Count == 0)
                 return -1;
 
             if (targetBp != null)
             {
-                // 1. Exact object reference match first
                 for (int i = 0; i < list.Count; i++)
                 {
                     if (list[i] != null && ReferenceEquals(list[i], targetBp))
                         return i;
                 }
 
-                // 2. Internal blueprint name match (e.g., distinct recipe names behind identical "Tinder Plug (2)" labels)
                 string targetInternalName = targetBp.name;
                 if (!string.IsNullOrEmpty(targetInternalName))
                 {
@@ -716,10 +665,11 @@ namespace CraftingSearch
 
             return -1;
         }
+
         private static int FindMatchingIndexNearHint(
-                    Il2CppSystem.Collections.Generic.List<BlueprintData> list,
-                    UnityEngine.Transform row,
-                    int hintIndex)
+            Il2CppSystem.Collections.Generic.List<BlueprintData> list,
+            UnityEngine.Transform row,
+            int hintIndex)
         {
             if (list == null || list.Count == 0 || row == null)
                 return -1;
@@ -742,7 +692,6 @@ namespace CraftingSearch
             int count = list.Count;
             int start = UnityEngine.Mathf.Clamp(hintIndex, 0, count - 1);
 
-            // 1. Check exact index first if it already matches this row's label
             var directBp = list[start];
             if (directBp != null)
             {
@@ -755,7 +704,6 @@ namespace CraftingSearch
                 }
             }
 
-            // 2. Search forward from start (no wrap-around) so scrolled duplicate-named items win
             for (int idx = start + 1; idx < count; idx++)
             {
                 var bp = list[idx];
@@ -771,7 +719,6 @@ namespace CraftingSearch
                 }
             }
 
-            // 3. Fallback: search before start if nothing matched past start
             for (int idx = 0; idx < start; idx++)
             {
                 var bp = list[idx];
@@ -789,15 +736,15 @@ namespace CraftingSearch
 
             return -1;
         }
-        // Attempt to bind a click handler to a crafting row that resolves the correct blueprint index based on the current filtered list and search state
+
         private static void BindRowIndexClickHandler(
-                    Panel_Crafting panel,
-                    Transform row,
-                    BlueprintData boundBlueprint,
-                    int fallbackIndex,
-                    int slotIndex,
-                    int visibleSlots,
-                    bool preferPositionalIndex)
+            Panel_Crafting panel,
+            Transform row,
+            BlueprintData boundBlueprint,
+            int fallbackIndex,
+            int slotIndex,
+            int visibleSlots,
+            bool preferPositionalIndex)
         {
             if (panel == null || row == null)
                 return;
@@ -878,7 +825,7 @@ namespace CraftingSearch
                             chosenIndex = resolvedByLabel;
                         }
                     }
-                    // If the row's current displayed label differs from activeList[chosenIndex], find the matching item near capturedSlot
+
                     if (chosenIndex >= 0 && chosenIndex < activeList.Count)
                     {
                         string rowText = string.Empty;
@@ -905,7 +852,8 @@ namespace CraftingSearch
                             }
                         }
                     }
-                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] Resolve slot={capturedSlot} count={activeList.Count} offset={scrollOffset} pos={positionalIndex} fallback={capturedFallback} -> chosen={chosenIndex}");
+
+                    //DEBUG//MelonLoader.MelonLogger.Msg($"[CraftingSearch] Resolve slot={capturedSlot} count={activeList.Count} offset={scrollOffset} pos={positionalIndex} fallback={capturedFallback} -> chosen={chosenIndex}");
 
                     if (chosenIndex >= 0 && chosenIndex < activeList.Count)
                     {
@@ -915,10 +863,11 @@ namespace CraftingSearch
                 })
             );
         }
+
         private static int ResolveBlueprintIndexForRow(
-                    Panel_Crafting panel,
-                    UnityEngine.Transform row,
-                    Il2CppSystem.Collections.Generic.List<BlueprintData> list)
+            Panel_Crafting panel,
+            UnityEngine.Transform row,
+            Il2CppSystem.Collections.Generic.List<BlueprintData> list)
         {
             if (panel == null || row == null || list == null || list.Count == 0)
                 return -1;
@@ -945,7 +894,6 @@ namespace CraftingSearch
                 searchStart = (prevIdx + 1) % count;
             }
 
-            // Pass 1A: Exact label or raw name match starting from searchStart
             if (!string.IsNullOrEmpty(primaryLabel))
             {
                 for (int offset = 0; offset < count; offset++)
@@ -967,7 +915,6 @@ namespace CraftingSearch
                 }
             }
 
-            // Pass 1B: Count-stripped base name match starting from searchStart
             if (!string.IsNullOrEmpty(primaryBase))
             {
                 for (int offset = 0; offset < count; offset++)
@@ -989,7 +936,6 @@ namespace CraftingSearch
                 }
             }
 
-            // Pass 2: Fallback across remaining labels on the row
             for (int offset = 0; offset < count; offset++)
             {
                 int idx = (searchStart + offset) % count;
@@ -1014,7 +960,6 @@ namespace CraftingSearch
                 }
             }
 
-            // Pass 3: Substring fallback for modded or custom-formatted names
             for (int offset = 0; offset < count; offset++)
             {
                 int idx = (searchStart + offset) % count;
@@ -1037,7 +982,7 @@ namespace CraftingSearch
 
             return -1;
         }
-        // Attempt to estimate the scroll list index based on the current scroll position and list count
+
         private static int GetApproxScrollListIndex(Panel_Crafting panel, int listCount)
         {
             if (panel == null || listCount <= 1)
@@ -1059,7 +1004,6 @@ namespace CraftingSearch
                         );
                     }
 
-                    // Fallback using UIScrollView localPosition Y offset scaled by list size
                     float localY = UnityEngine.Mathf.Abs(scrollView.transform.localPosition.y);
                     float approxTotalHeight = UnityEngine.Mathf.Max(600f, listCount * 58f);
                     if (localY > 0.01f)
@@ -1081,158 +1025,7 @@ namespace CraftingSearch
 
             return 0;
         }
-        // Attempt to find the next matching blueprint index based on row labels, query, and used indices
-        private static int FindNextMatchingBlueprintIndex(
-            Il2CppSystem.Collections.Generic.List<BlueprintData> list,
-            System.Collections.Generic.List<string> rowLabels,
-            string query,
-            bool hasQuery,
-            System.Collections.Generic.HashSet<int> usedIndices,
-            int startIndex)
-        {
-            if (list == null || list.Count == 0)
-                return -1;
 
-            int count = list.Count;
-            int safeStart = ((startIndex % count) + count) % count;
-            string primaryLabel = rowLabels != null && rowLabels.Count > 0 ? rowLabels[0] : string.Empty;
-
-            // Pass 1A: Exact or prefix match on primary row label starting from scroll offset
-            if (!string.IsNullOrEmpty(primaryLabel))
-            {
-                for (int offset = 0; offset < count; offset++)
-                {
-                    int i = (safeStart + offset) % count;
-                    if (usedIndices.Contains(i)) continue;
-                    BlueprintData bp = list[i];
-                    if (bp == null) continue;
-
-                    string disp = (bp.GetDisplayedNameWithCount() ?? string.Empty).Trim();
-                    string raw = (bp.name ?? string.Empty).Trim();
-
-                    bool primaryMatch = string.Equals(disp, primaryLabel, System.StringComparison.OrdinalIgnoreCase) ||
-                                        string.Equals(raw, primaryLabel, System.StringComparison.OrdinalIgnoreCase) ||
-                                        disp.StartsWith(primaryLabel, System.StringComparison.OrdinalIgnoreCase) ||
-                                        primaryLabel.StartsWith(disp, System.StringComparison.OrdinalIgnoreCase);
-
-                    if (!primaryMatch) continue;
-
-                    bool queryOk = !hasQuery ||
-                                   disp.Contains(query, System.StringComparison.OrdinalIgnoreCase) ||
-                                   raw.Contains(query, System.StringComparison.OrdinalIgnoreCase) ||
-                                   primaryLabel.Contains(query, System.StringComparison.OrdinalIgnoreCase);
-
-                    if (queryOk)
-                    {
-                        usedIndices.Add(i);
-                        return i;
-                    }
-                }
-            }
-
-            // Pass 1B: Exact or prefix match across row labels starting from scroll offset
-            for (int offset = 0; offset < count; offset++)
-            {
-                int i = (safeStart + offset) % count;
-                if (usedIndices.Contains(i)) continue;
-                BlueprintData bp = list[i];
-                if (bp == null) continue;
-
-                string disp = (bp.GetDisplayedNameWithCount() ?? string.Empty).Trim();
-                string raw = (bp.name ?? string.Empty).Trim();
-
-                bool labelOk = rowLabels == null || rowLabels.Count == 0;
-                if (rowLabels != null)
-                {
-                    foreach (string lbl in rowLabels)
-                    {
-                        if (string.Equals(disp, lbl, System.StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(raw, lbl, System.StringComparison.OrdinalIgnoreCase) ||
-                            disp.StartsWith(lbl, System.StringComparison.OrdinalIgnoreCase) ||
-                            lbl.StartsWith(disp, System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            labelOk = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!labelOk) continue;
-
-                bool queryOk = !hasQuery ||
-                               disp.Contains(query, System.StringComparison.OrdinalIgnoreCase) ||
-                               raw.Contains(query, System.StringComparison.OrdinalIgnoreCase);
-                if (!queryOk && rowLabels != null)
-                {
-                    foreach (string lbl in rowLabels)
-                    {
-                        if (lbl.Contains(query, System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            queryOk = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (queryOk)
-                {
-                    usedIndices.Add(i);
-                    return i;
-                }
-            }
-
-            // Pass 2: Substring fallback starting from scroll offset
-            for (int offset = 0; offset < count; offset++)
-            {
-                int i = (safeStart + offset) % count;
-                if (usedIndices.Contains(i)) continue;
-                BlueprintData bp = list[i];
-                if (bp == null) continue;
-
-                string disp = (bp.GetDisplayedNameWithCount() ?? string.Empty).Trim();
-                string raw = (bp.name ?? string.Empty).Trim();
-
-                bool labelOk = rowLabels == null || rowLabels.Count == 0;
-                if (rowLabels != null)
-                {
-                    foreach (string lbl in rowLabels)
-                    {
-                        if (disp.Contains(lbl, System.StringComparison.OrdinalIgnoreCase) ||
-                            raw.Contains(lbl, System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            labelOk = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!labelOk) continue;
-
-                bool queryOk = !hasQuery ||
-                               disp.Contains(query, System.StringComparison.OrdinalIgnoreCase) ||
-                               raw.Contains(query, System.StringComparison.OrdinalIgnoreCase);
-                if (!queryOk && rowLabels != null)
-                {
-                    foreach (string lbl in rowLabels)
-                    {
-                        if (lbl.Contains(query, System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            queryOk = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (queryOk)
-                {
-                    usedIndices.Add(i);
-                    return i;
-                }
-            }
-
-            return -1;
-        }
-        // Attempt to synchronize the visible blueprint list rows with the filtered list, adjusting labels, icons, and click handlers
         private static void SyncBlueprintListRows(Panel_Crafting panel, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
         {
             if (panel == null || filtered == null)
@@ -1266,7 +1059,6 @@ namespace CraftingSearch
             if (rowTransforms.Count == 0)
                 return;
 
-            // Leave native row clicks/scrolling alone when no search filter is active
             if (!hasQuery)
             {
                 foreach (var row in rowTransforms)
@@ -1276,7 +1068,6 @@ namespace CraftingSearch
                         row.gameObject.SetActive(true);
                     }
                 }
-                // DEBUG //MelonLoader.MelonLogger.Msg($"[CraftingSearch] SyncBlueprintListRows skipped custom click override (!hasQuery, rows={rowTransforms.Count}, filtered={filtered.Count})");
                 return;
             }
 
@@ -1371,7 +1162,6 @@ namespace CraftingSearch
             panel.m_NeedsUpdate = true;
         }
 
-        // Attempt to blank out the image, description, and requirements panes when a search filter is active and isn't showing a valid result, to avoid confusion with stale data
         private static void SetDetailPaneBlank(Panel_Crafting panel, bool blank)
         {
             if (panel == null)
@@ -1386,7 +1176,6 @@ namespace CraftingSearch
                 if (t == null)
                     continue;
 
-                // Never touch the search bar itself, category buttons, or blueprint list rows
                 if (searchBarGo != null && (t == searchBarGo || t.IsChildOf(searchBarGo)))
                     continue;
 
@@ -1425,7 +1214,6 @@ namespace CraftingSearch
                     }
                     else
                     {
-                        // Only re-activate main item/requirement slots when not a multi-material slot that was inactive
                         if (!n.StartsWith("RequirementCraftMaterial ", System.StringComparison.OrdinalIgnoreCase) ||
                             n.EndsWith(" 1", System.StringComparison.OrdinalIgnoreCase))
                         {
@@ -1436,78 +1224,13 @@ namespace CraftingSearch
             }
         }
 
-        // Attempt to lock or unlock native input handling when the search bar is active
-        [HarmonyPrefix]
-        [HarmonyPatch("Update")]
-        private static bool Update_Prefix(Panel_Crafting __instance)
-        {
-            var searchInput = SearchBarUI.SearchInput;
-
-            if (_pendingTabFocus)
-            {
-                _pendingTabFocus = false;
-                if (searchInput != null && __instance != null && __instance.IsEnabled())
-                {
-                    searchInput.isSelected = true;
-                    if (UICamera.currentCamera != null || UICamera.mainCamera != null)
-                    {
-                        UICamera.selectedObject = searchInput.gameObject;
-                    }
-                }
-            }
-
-            if (searchInput != null && __instance != null && __instance.IsEnabled() &&
-                UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Tab))
-            {
-                if (!searchInput.isSelected)
-                {
-                    searchInput.isSelected = true;
-                    _pendingTabFocus = true;
-                    if (UICamera.currentCamera != null || UICamera.mainCamera != null)
-                    {
-                        UICamera.selectedObject = searchInput.gameObject;
-                    }
-                }
-                else
-                {
-                    searchInput.isSelected = false;
-                    _pendingTabFocus = false;
-                    if (UICamera.selectedObject == searchInput.gameObject)
-                    {
-                        UICamera.selectedObject = null;
-                    }
-                }
-            }
-            
-            bool isTyping = SearchBarUI.IsTyping;
-            if (isTyping != _wasTyping)
-            {
-                _wasTyping = isTyping;
-                SetNativeInputLock(isTyping);
-            }
-
-            if (isTyping)
-            {
-                if (//UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Escape) ||
-                    UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Return) ||
-                    UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.KeypadEnter))
-                {
-                    SearchBarUI.SearchInput?.isSelected = false;
-                }
-            }
-
-            // Always return true so Panel_Crafting.Update() processes m_NeedsUpdate live!
-            return true;
-        }
-
-        private static void SetNativeInputLock(bool locked)
+        internal static void SetNativeInputLock(bool locked)
         {
             try
             {
                 var reInputType = System.Type.GetType("Il2CppRewired.ReInput, Il2CppRewired_Core");
                 if (reInputType == null)
                 {
-                    // Fallback: search loaded assemblies for ReInput
                     foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
                     {
                         reInputType = asm.GetType("Il2CppRewired.ReInput") ?? asm.GetType("Rewired.ReInput");
@@ -1534,12 +1257,10 @@ namespace CraftingSearch
                 var mapsProp = controllers?.GetType().GetProperty("maps");
                 object maps = mapsProp?.GetValue(controllers);
 
-                // Toggle Keyboard maps (ControllerType.Keyboard = 0): enabled = !locked
                 var setMapsEnabled = maps?.GetType().GetMethod("SetMapsEnabled", [typeof(bool), typeof(int)]);
                 if (setMapsEnabled != null)
                 {
                     setMapsEnabled.Invoke(maps, [!locked, 0]);
-                    //MelonLoader.MelonLogger.Msg($"Rewired Keyboard maps enabled = {!locked}");
                 }
             }
             catch (System.Exception ex)

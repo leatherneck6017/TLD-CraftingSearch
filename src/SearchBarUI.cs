@@ -9,7 +9,7 @@ namespace CraftingSearch
     {
         private const int BoxWidth = 380;
         private const int BoxHeight = 36;
-        private const int SearchFontSize = 17;
+        private const int SearchFontSize = 12;
         internal static UIInput SearchInput;
         private static Panel_Crafting _craftingPanel;
         private static bool _pendingFilterRefresh;
@@ -155,7 +155,7 @@ namespace CraftingSearch
             UISprite bpBgSource = FindBlueprintRowBackgroundSprite(panel);
             if (bpBgSource != null)
             {
-                GameObject bgGo = new GameObject("SearchBg");
+                GameObject bgGo = new("SearchBg");
                 bgGo.transform.SetParent(clone.transform, false);
                 bgGo.layer = clone.layer;
                 bgGo.transform.localPosition = Vector3.zero;
@@ -202,7 +202,7 @@ namespace CraftingSearch
 
             if (label == null)
             {
-                GameObject labelGo = new GameObject("SearchLabel");
+                GameObject labelGo = new("SearchLabel");
                 labelGo.transform.SetParent(clone.transform, false);
                 labelGo.layer = clone.layer;
                 label = labelGo.AddComponent<UILabel>();
@@ -212,7 +212,7 @@ namespace CraftingSearch
             SearchInput.enabled = true;
             SearchInput.onChange.Clear();
             SearchInput.onSubmit.Clear();
-            SearchInput.defaultText = "Search blueprints...";
+            SearchInput.defaultText = "Search by <term>, name:<term>, or ing:<term>"; // default text for the search input
             SearchInput.value = string.Empty;
             SearchInput.activeTextColor = Color.white;
             SearchInput.caretColor = Color.white;
@@ -231,11 +231,11 @@ namespace CraftingSearch
             label.maxLineCount = 1;
             label.fontSize = SearchFontSize; // adjust font size to fit within the box, taking into account the 'x' button and padding
             label.width = 360; // adjust width to fit within the box, taking into account the 'x' button and padding
-            label.height = 32;
+            label.height = SearchFontSize * 2; // height should be at least 2x font size to accommodate the text and padding
             label.depth = 500; // depth should be higher than the background sprite to ensure it's visible
             label.transform.localScale = Vector3.one;
             label.transform.localPosition = new Vector3(-185f, 0f, -2f); // position the text to the left side of the box, with some padding
-            label.text = "Search blueprints...";
+            label.text = "Search by <term>, name:<term>, or ing:<term>"; // placeholder text for the search input
             label.MarkAsChanged();
 
             BoxCollider collider = clone.GetComponent<BoxCollider>() ?? clone.AddComponent<BoxCollider>();
@@ -386,10 +386,7 @@ namespace CraftingSearch
                     SearchInput.label.MarkAsChanged();
                 }
             }
-            if (_clearButtonGo != null)
-            {
-                _clearButtonGo.SetActive(false);
-            }
+            _clearButtonGo?.SetActive(false);
         }
 
         private static void OnSearchTextChanged()
@@ -406,10 +403,7 @@ namespace CraftingSearch
                 //lbl.text = string.IsNullOrEmpty(current) ? (SearchInput.defaultText ?? string.Empty) : current;
                 //lbl.MarkAsChanged();
             }
-            if (_clearButtonGo != null)
-            {
-                _clearButtonGo.SetActive(!string.IsNullOrEmpty(current));
-            }
+            _clearButtonGo?.SetActive(!string.IsNullOrEmpty(current));
             if (!_pendingFilterRefresh)
             {
                 _pendingFilterRefresh = true;
