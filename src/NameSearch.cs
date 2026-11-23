@@ -98,7 +98,9 @@ namespace CraftingSearch
                         SearchMode.NameOnly => nameMatches,
                         SearchMode.IngredientOnly => IngredientSearch.MatchesAnyIngredient(bp, searchTerm),
                         _ => nameMatches || IngredientSearch.MatchesAnyIngredient(bp, searchTerm)
+
                     };
+
 
                     if (!matches)
                     {
@@ -436,7 +438,7 @@ namespace CraftingSearch
 
                 var onScrollAction = new System.Action(() =>
                 {
-                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] Game scroll event fired on '{sv.name}'");
+                    //DEBUG//MelonLoader.MelonLogger.Msg($"[CraftingSearch] Game scroll event fired on '{sv.name}'");
                     var filtered = panel.m_FilteredBlueprints;
                     if (filtered != null && !string.IsNullOrEmpty(SearchBarUI.CurrentQuery))
                     {
@@ -550,7 +552,7 @@ namespace CraftingSearch
 
                 panel.m_NeedsUpdate = true;
 
-                MelonLoader.MelonLogger.Msg($"[CraftingSearch] Select directIdx={blueprintIndex}/{sourceList.Count} raw='{selectedRaw}' disp='{selectedDisp}'");
+                //DEBUG//MelonLoader.MelonLogger.Msg($"[CraftingSearch] Select directIdx={blueprintIndex}/{sourceList.Count} raw='{selectedRaw}' disp='{selectedDisp}'");
 
                 foreach (var widget in panel.GetComponentsInChildren<UIWidget>(true))
                 {
@@ -775,7 +777,7 @@ namespace CraftingSearch
             listener.onClick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UIEventListener.VoidDelegate>(
                 new System.Action<UnityEngine.GameObject>((_) =>
                 {
-                    MelonLoader.MelonLogger.Msg($"[CraftingSearch] RawOnClick fired on '{row.name}' slot={capturedSlot} search={capturedPreferPositional}");
+                    //DEBUG//MelonLoader.MelonLogger.Msg($"[CraftingSearch] RawOnClick fired on '{row.name}' slot={capturedSlot} search={capturedPreferPositional}");
 
                     var activeList = panel.m_FilteredBlueprints ?? panel.m_Blueprints;
                     if (activeList == null || activeList.Count == 0)
@@ -1240,7 +1242,7 @@ namespace CraftingSearch
 
                 if (reInputType == null)
                 {
-                    MelonLoader.MelonLogger.Warning("[CraftingSearch] Could not locate ReInput type.");
+                    //DEBUG//MelonLoader.MelonLogger.Warning("[CraftingSearch] Could not locate ReInput type.");
                     return;
                 }
 
@@ -1265,7 +1267,7 @@ namespace CraftingSearch
             }
             catch (System.Exception ex)
             {
-                MelonLoader.MelonLogger.Warning($"[CraftingSearch] Rewired lock error: {ex.Message}");
+                MelonLoader.MelonLogger.Error($"[CraftingSearch] Rewired lock error: {ex.Message}");
             }
         }
     }

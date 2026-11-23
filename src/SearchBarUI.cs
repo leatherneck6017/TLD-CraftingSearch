@@ -1,5 +1,6 @@
 ﻿using Il2Cpp;
 using Il2CppInterop.Runtime;
+using Il2CppTLD.UI.Scroll;
 using MelonLoader;
 using UnityEngine;
 
@@ -9,7 +10,8 @@ namespace CraftingSearch
     {
         private const int BoxWidth = 380;
         private const int BoxHeight = 36;
-        private const int SearchFontSize = 12;
+        private const int SearchFontSize = 16;
+        private const string SearchTextPlaceholder = "Search by term  |  name:  |  or ing:"; // placeholder text to guide users on how to use the search bar
         internal static UIInput SearchInput;
         private static Panel_Crafting _craftingPanel;
         private static bool _pendingFilterRefresh;
@@ -212,7 +214,7 @@ namespace CraftingSearch
             SearchInput.enabled = true;
             SearchInput.onChange.Clear();
             SearchInput.onSubmit.Clear();
-            SearchInput.defaultText = "Search by <term>, name:<term>, or ing:<term>"; // default text for the search input
+            SearchInput.defaultText = SearchTextPlaceholder;
             SearchInput.value = string.Empty;
             SearchInput.activeTextColor = Color.white;
             SearchInput.caretColor = Color.white;
@@ -235,7 +237,7 @@ namespace CraftingSearch
             label.depth = 500; // depth should be higher than the background sprite to ensure it's visible
             label.transform.localScale = Vector3.one;
             label.transform.localPosition = new Vector3(-185f, 0f, -2f); // position the text to the left side of the box, with some padding
-            label.text = "Search by <term>, name:<term>, or ing:<term>"; // placeholder text for the search input
+            label.text = SearchTextPlaceholder; // only used the first time the craft panel is opened, after that it falls back to the SearchInput.value
             label.MarkAsChanged();
 
             BoxCollider collider = clone.GetComponent<BoxCollider>() ?? clone.AddComponent<BoxCollider>();
@@ -320,10 +322,10 @@ namespace CraftingSearch
         {
             if (panel == null) return null;
 
-            foreach (var lbl in panel.GetComponentsInChildren<UILabel>(true))
-            {
-                if (lbl != null && (lbl.bitmapFont != null || lbl.trueTypeFont != null))
+                foreach (var lbl in panel.GetComponentsInChildren<UILabel>(true))
                 {
+                if (lbl != null && (lbl.bitmapFont != null || lbl.trueTypeFont != null))
+                    {
                     return lbl;
                 }
             }

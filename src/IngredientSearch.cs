@@ -12,7 +12,7 @@ namespace CraftingSearch
         NameOnly,
         IngredientOnly
     }
-    
+
     internal static class IngredientSearch
     {
         private static readonly string[] CandidateMemberNames =
@@ -26,11 +26,12 @@ namespace CraftingSearch
             "m_RequiredBlueprints", "RequiredBlueprints"
         ];
 
-        private static readonly string[] NameMembers =
+        private static readonly string[] DisplayNameMembers =
         [
-            "m_LocalizedDisplayName", "LocalizedDisplayName",
-            "DisplayName", "m_DisplayName",
-            "name", "Name"
+            "DisplayName",
+            "m_LocalizedDisplayName",
+            "LocalizedDisplayName",
+            "m_DisplayName"
         ];
 
         private static readonly string[] NestedItemMembers =
@@ -86,7 +87,7 @@ namespace CraftingSearch
 
             return false;
         }
-        
+
         internal static bool MatchesAnyIngredient(BlueprintData bp, string query)
         {
             if (bp == null || string.IsNullOrWhiteSpace(query))
@@ -120,28 +121,6 @@ namespace CraftingSearch
                 }
             }
 
-            // Fallback: scan any array/list/collection members on BlueprintData that might hold ingredient entries
-            foreach (FieldInfo field in type.GetFields(flags))
-            {
-                if (field.FieldType == typeof(string) || field.FieldType.IsPrimitive)
-                    continue;
-
-                string lower = field.Name.ToLowerInvariant();
-                if (!lower.Contains("gear") &&
-                    !lower.Contains("item") &&
-                    !lower.Contains("ingred") &&
-                    !lower.Contains("mat") &&
-                    !lower.Contains("req"))
-                {
-                    continue;
-                }
-
-                object val = null;
-                try { val = field.GetValue(bp); } catch { }
-                if (val != null && ObjectMatchesQuery(val, query, visited, depth: 0))
-                    return true;
-            }
-
             return false;
         }
 
@@ -156,11 +135,6 @@ namespace CraftingSearch
 
             if (!obj.GetType().IsValueType && !visited.Add(obj))
                 return false;
-
-            if (obj is string s)
-            {
-                return s.Contains(query, StringComparison.OrdinalIgnoreCase);
-            }
 
             if (obj is IEnumerable enumerable)
             {
@@ -193,7 +167,7 @@ namespace CraftingSearch
                                      BindingFlags.NonPublic |
                                      BindingFlags.Instance;
 
-            foreach (string nameMember in NameMembers)
+            foreach (string nameMember in DisplayNameMembers)
             {
                 PropertyInfo p = type.GetProperty(nameMember, flags);
                 if (p != null && p.GetIndexParameters().Length == 0)
