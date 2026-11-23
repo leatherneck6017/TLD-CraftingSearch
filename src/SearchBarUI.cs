@@ -10,8 +10,9 @@ namespace CraftingSearch
     {
         private const int BoxWidth = 380;
         private const int BoxHeight = 36;
-        private const int SearchFontSize = 16;
-        private const string SearchTextPlaceholder = "Search by term  |  name:  |  or ing:"; // placeholder text to guide users on how to use the search bar
+        private const int PlaceholderFontSize = 13;
+        private const int TypedFontSize = 16;
+        private const string SearchTextPlaceholder = "Search blueprints (with or without a prefix)"; // placeholder text to guide users on how to use the search bar
         internal static UIInput SearchInput;
         private static Panel_Crafting _craftingPanel;
         private static bool _pendingFilterRefresh;
@@ -85,6 +86,7 @@ namespace CraftingSearch
             {
                 SearchInput.gameObject.SetActive(true);
                 SearchInput.value = string.Empty;
+                SearchInput.activeTextColor = Color.white;
 
                 Transform existingParent = SearchInput.transform.parent;
                 if (existingParent != null)
@@ -99,8 +101,11 @@ namespace CraftingSearch
                 {
                     SearchInput.label.gameObject.SetActive(true);
                     SearchInput.label.enabled = true;
+                    SearchInput.label.color = Color.white;
                     SearchInput.label.MarkAsChanged();
                 }
+
+                SyncPlaceholderFontSize();
                 return;
             }
 
@@ -231,20 +236,21 @@ namespace CraftingSearch
             label.alignment = NGUIText.Alignment.Left;
             label.overflowMethod = UILabel.Overflow.ClampContent;
             label.maxLineCount = 1;
-            label.fontSize = SearchFontSize; // adjust font size to fit within the box, taking into account the 'x' button and padding
+            label.fontSize = PlaceholderFontSize; // starts empty showing placeholder
             label.width = 360; // adjust width to fit within the box, taking into account the 'x' button and padding
-            label.height = SearchFontSize * 2; // height should be at least 2x font size to accommodate the text and padding
+            label.height = label.fontSize * 2; // height should be at least 2x font size to accommodate the text and padding
             label.depth = 500; // depth should be higher than the background sprite to ensure it's visible
             label.transform.localScale = Vector3.one;
             label.transform.localPosition = new Vector3(-185f, 0f, -2f); // position the text to the left side of the box, with some padding
             label.text = SearchTextPlaceholder; // only used the first time the craft panel is opened, after that it falls back to the SearchInput.value
             label.MarkAsChanged();
+            SyncPlaceholderFontSize();
 
             BoxCollider collider = clone.GetComponent<BoxCollider>() ?? clone.AddComponent<BoxCollider>();
             collider.size = new Vector3(BoxWidth, BoxHeight, 1f);
             collider.center = Vector3.zero;
             collider.enabled = true;
-            
+
             // add clearing button to the right side of the search box
             _clearButtonGo = new GameObject("ClearButton");
             _clearButtonGo.transform.SetParent(clone.transform, false);
@@ -284,7 +290,7 @@ namespace CraftingSearch
             clearLabel.alignment = NGUIText.Alignment.Center;
             clearLabel.overflowMethod = UILabel.Overflow.ResizeFreely;
             clearLabel.maxLineCount = 1;
-            clearLabel.fontSize = SearchFontSize;
+            clearLabel.fontSize = TypedFontSize;
             clearLabel.width = 24;
             clearLabel.height = 24;
             clearLabel.depth = 505;
@@ -309,7 +315,6 @@ namespace CraftingSearch
 
             _clearButtonGo.SetActive(false);
 
-
             EventDelegate.Add(SearchInput.onChange, DelegateSupport.ConvertDelegate<EventDelegate.Callback>(
                 new System.Action(OnSearchTextChanged)
             ));
@@ -322,10 +327,10 @@ namespace CraftingSearch
         {
             if (panel == null) return null;
 
-                foreach (var lbl in panel.GetComponentsInChildren<UILabel>(true))
-                {
+            foreach (var lbl in panel.GetComponentsInChildren<UILabel>(true))
+            {
                 if (lbl != null && (lbl.bitmapFont != null || lbl.trueTypeFont != null))
-                    {
+                {
                     return lbl;
                 }
             }
@@ -385,10 +390,19 @@ namespace CraftingSearch
                 if (SearchInput.label != null)
                 {
                     SearchInput.label.text = SearchInput.defaultText ?? string.Empty;
+                    SearchInput.label.color = Color.white;
                     SearchInput.label.MarkAsChanged();
                 }
             }
             _clearButtonGo?.SetActive(false);
+            SyncPlaceholderFontSize();
+            MelonCoroutines.Start(SyncPlaceholderNextFrame());
+        }
+
+        private static System.Collections.IEnumerator SyncPlaceholderNextFrame()
+        {
+            yield return null;
+            SyncPlaceholderFontSize();
         }
 
         private static void OnSearchTextChanged()
@@ -402,9 +416,9 @@ namespace CraftingSearch
                 lbl.enabled = true;
                 lbl.alpha = 1f;
                 lbl.color = Color.white;
-                //lbl.text = string.IsNullOrEmpty(current) ? (SearchInput.defaultText ?? string.Empty) : current;
-                //lbl.MarkAsChanged();
             }
+
+            SyncPlaceholderFontSize();
             _clearButtonGo?.SetActive(!string.IsNullOrEmpty(current));
             if (!_pendingFilterRefresh)
             {
@@ -422,6 +436,51 @@ namespace CraftingSearch
                 yield break;
 
             _craftingPanel.ApplyFilter();
+        }
+
+        // helper method to adjust the font size of the search input's label based on whether the user is typing or if the placeholder text is showing
+        internal static void SyncPlaceholderFontSize()
+        {
+            if (SearchInput == null || SearchInput.label == null)
+                return;
+
+            bool isFocused = false;
+            try { isFocused = SearchInput.isSelected; } catch { }
+
+            bool showingPlaceholder = !isFocused && string.IsNullOrEmpty(SearchInput.value);
+            int targetSize = showingPlaceholder ? PlaceholderFontSize : TypedFontSize;
+
+            if (SearchInput.label.fontSize != targetSize)
+            {
+                SearchInput.label.fontSize = targetSize;
+                SearchInput.label.height = targetSize * 2;
+                SearchInput.label.MarkAsChanged();
+            }
+
+            if (showingPlaceholder)
+            {
+                SearchInput.label.color = Color.white;
+                SearchInput.label.MarkAsChanged();
+            }
+        }
+
+        internal static void ForcePlaceholderStyle()
+        {
+            if (SearchInput == null || SearchInput.label == null)
+                return;
+
+            UILabel lbl = SearchInput.label;
+            lbl.fontSize = PlaceholderFontSize;
+            lbl.height = PlaceholderFontSize * 2;
+            lbl.color = Color.white;
+
+            if (string.IsNullOrEmpty(SearchInput.value))
+            {
+                lbl.text = SearchInput.defaultText ?? string.Empty;
+            }
+
+            lbl.MarkAsChanged();
+            try { lbl.ProcessAndRequest(); } catch { }
         }
     }
 }

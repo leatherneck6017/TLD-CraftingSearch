@@ -15,6 +15,26 @@ namespace CraftingSearch
 
     internal static class IngredientSearch
     {
+        private static readonly string[] IngredientPrefixes =
+        [
+            "ingredient:",
+            "ingredient!",
+            "ingredient/",
+            "ingredient\\",
+            "ing:",
+            "ing!",
+            "ing/",
+            "ing\\"
+        ];
+
+        private static readonly string[] NamePrefixes =
+        [
+            "name:",
+            "name!",
+            "name/",
+            "name\\"
+        ];
+
         private static readonly string[] CandidateMemberNames =
         [
             "m_RequiredGear", "RequiredGear",
@@ -26,12 +46,11 @@ namespace CraftingSearch
             "m_RequiredBlueprints", "RequiredBlueprints"
         ];
 
-        private static readonly string[] DisplayNameMembers =
+        // Only check displayed/localized names on ingredient items—exclude internal/asset "name" fields
+        private static readonly string[] NameMembers =
         [
-            "DisplayName",
-            "m_LocalizedDisplayName",
-            "LocalizedDisplayName",
-            "m_DisplayName"
+            "m_LocalizedDisplayName", "LocalizedDisplayName",
+            "DisplayName", "m_DisplayName"
         ];
 
         private static readonly string[] NestedItemMembers =
@@ -49,16 +68,22 @@ namespace CraftingSearch
 
             string trimmed = rawQuery.Trim();
 
-            if (trimmed.StartsWith("ing:", StringComparison.OrdinalIgnoreCase))
+            foreach (string prefix in IngredientPrefixes)
             {
-                term = trimmed.Substring("ing:".Length).Trim();
-                return SearchMode.IngredientOnly;
+                if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    term = trimmed.Substring(prefix.Length).Trim();
+                    return SearchMode.IngredientOnly;
+                }
             }
 
-            if (trimmed.StartsWith("name:", StringComparison.OrdinalIgnoreCase))
+            foreach (string prefix in NamePrefixes)
             {
-                term = trimmed.Substring("name:".Length).Trim();
-                return SearchMode.NameOnly;
+                if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    term = trimmed.Substring(prefix.Length).Trim();
+                    return SearchMode.NameOnly;
+                }
             }
 
             term = trimmed;
@@ -71,17 +96,10 @@ namespace CraftingSearch
             if (string.IsNullOrWhiteSpace(rawQuery))
                 return false;
 
-            string trimmed = rawQuery.Trim();
-
-            if (trimmed.StartsWith("ingredient:", StringComparison.OrdinalIgnoreCase))
+            SearchMode mode = ParseQuery(rawQuery, out string parsedTerm);
+            if (mode == SearchMode.IngredientOnly)
             {
-                ingredientTerm = trimmed.Substring("ingredient:".Length).Trim();
-                return true;
-            }
-
-            if (trimmed.StartsWith("ing:", StringComparison.OrdinalIgnoreCase))
-            {
-                ingredientTerm = trimmed.Substring("ing:".Length).Trim();
+                ingredientTerm = parsedTerm;
                 return true;
             }
 
@@ -119,6 +137,28 @@ namespace CraftingSearch
                     if (val != null && ObjectMatchesQuery(val, query, visited, depth: 0))
                         return true;
                 }
+            }
+
+            // Fallback: scan any array/list/collection members on BlueprintData that might hold ingredient entries
+            foreach (FieldInfo field in type.GetFields(flags))
+            {
+                if (field.FieldType == typeof(string) || field.FieldType.IsPrimitive)
+                    continue;
+
+                string lower = field.Name.ToLowerInvariant();
+                if (!lower.Contains("gear") &&
+                    !lower.Contains("item") &&
+                    !lower.Contains("ingred") &&
+                    !lower.Contains("mat") &&
+                    !lower.Contains("req"))
+                {
+                    continue;
+                }
+
+                object val = null;
+                try { val = field.GetValue(bp); } catch { }
+                if (val != null && ObjectMatchesQuery(val, query, visited, depth: 0))
+                    return true;
             }
 
             return false;
@@ -167,7 +207,7 @@ namespace CraftingSearch
                                      BindingFlags.NonPublic |
                                      BindingFlags.Instance;
 
-            foreach (string nameMember in DisplayNameMembers)
+            foreach (string nameMember in NameMembers)
             {
                 PropertyInfo p = type.GetProperty(nameMember, flags);
                 if (p != null && p.GetIndexParameters().Length == 0)
