@@ -60,6 +60,7 @@ namespace CraftingSearch.src
                     {
                         UICamera.selectedObject = searchInput.gameObject;
                     }
+                    SearchBarUI.SyncPlaceholderFontSize();
                 }
             }
 
@@ -84,6 +85,8 @@ namespace CraftingSearch.src
                         UICamera.selectedObject = null;
                     }
                 }
+
+                SearchBarUI.SyncPlaceholderFontSize();
             }
 
             bool isTyping = SearchBarUI.IsTyping;
@@ -99,7 +102,11 @@ namespace CraftingSearch.src
                     UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Return) ||
                     UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.KeypadEnter))
                 {
-                    SearchBarUI.SearchInput?.isSelected = false;
+                    if (SearchBarUI.SearchInput != null)
+                    {
+                        SearchBarUI.SearchInput.isSelected = false;
+                    }
+                    SearchBarUI.SyncPlaceholderFontSize();
                 }
             }
 

@@ -13,6 +13,7 @@ namespace CraftingSearch
         private const int PlaceholderFontSize = 13;
         private const int TypedFontSize = 16;
         private const string SearchTextPlaceholder = "Search blueprints (with or without a prefix)"; // placeholder text to guide users on how to use the search bar
+
         internal static UIInput SearchInput;
         private static Panel_Crafting _craftingPanel;
         private static bool _pendingFilterRefresh;
@@ -81,6 +82,7 @@ namespace CraftingSearch
         internal static void AttachTo(Panel_Crafting panel)
         {
             _craftingPanel = panel;
+
             // If the search input already exists, just reset it and ensure it's active
             if (SearchInput != null)
             {
@@ -99,9 +101,7 @@ namespace CraftingSearch
 
                 if (SearchInput.label != null)
                 {
-                    SearchInput.label.gameObject.SetActive(true);
-                    SearchInput.label.enabled = true;
-                    SearchInput.label.color = Color.white;
+                    ApplyLabelVisibilityAndColor(SearchInput.label, Color.white);
                     SearchInput.label.MarkAsChanged();
                 }
 
@@ -125,19 +125,7 @@ namespace CraftingSearch
             clone.transform.localScale = Vector3.one;
 
             // Strip gameplay/localization/tween scripts so nothing overwrites text or blocks NGUI rendering
-            foreach (var mb in clone.GetComponentsInChildren<MonoBehaviour>(true))
-            {
-                if (mb == null) continue;
-                string typeName = mb.GetIl2CppType().Name;
-                if (typeName != nameof(UIInput) &&
-                    typeName != nameof(UISprite) &&
-                    typeName != nameof(UILabel) &&
-                    typeName != nameof(UIWidget) &&
-                    typeName != nameof(BoxCollider))
-                {
-                    UnityEngine.Object.Destroy(mb);
-                }
-            }
+            StripNonUiMonoBehaviours(clone, nameof(UIInput), nameof(UISprite), nameof(UILabel), nameof(UIWidget), nameof(BoxCollider));
 
             foreach (var w in clone.GetComponentsInChildren<UIWidget>(true))
             {
@@ -151,69 +139,11 @@ namespace CraftingSearch
             float searchBoxX = 0f;
             float searchBoxY = -200f;
 
-            foreach (var oldSprite in clone.GetComponentsInChildren<UISprite>(true))
-            {
-                if (oldSprite != null)
-                {
-                    UnityEngine.Object.Destroy(oldSprite.gameObject == clone ? (UnityEngine.Object)oldSprite : oldSprite.gameObject);
-                }
-            }
+            DestroyExistingWidgets<UISprite>(clone);
+            CreateBackgroundSprite(panel, clone);
+            DestroyExistingWidgets<UILabel>(clone);
 
-            UISprite bpBgSource = FindBlueprintRowBackgroundSprite(panel);
-            if (bpBgSource != null)
-            {
-                GameObject bgGo = new("SearchBg");
-                bgGo.transform.SetParent(clone.transform, false);
-                bgGo.layer = clone.layer;
-                bgGo.transform.localPosition = Vector3.zero;
-                bgGo.transform.localScale = Vector3.one;
-
-                UISprite bgSprite = bgGo.AddComponent<UISprite>();
-                bgSprite.atlas = bpBgSource.atlas;
-                bgSprite.spriteName = bpBgSource.spriteName;
-                bgSprite.type = bpBgSource.type;
-                bgSprite.alpha = 1f;
-                bgSprite.color = new Color(0.15f, 0.17f, 0.17f, 0.95f);
-                bgSprite.width = BoxWidth;
-                bgSprite.height = BoxHeight;
-                bgSprite.depth = 499;
-                bgSprite.MarkAsChanged();
-            }
-
-            foreach (var oldLabel in clone.GetComponentsInChildren<UILabel>(true))
-            {
-                if (oldLabel != null)
-                {
-                    UnityEngine.Object.Destroy(oldLabel.gameObject == clone ? (UnityEngine.Object)oldLabel : oldLabel.gameObject);
-                }
-            }
-
-            UILabel label = null;
-            if (sourceLabel != null)
-            {
-                GameObject labelGo = UnityEngine.Object.Instantiate(sourceLabel.gameObject, clone.transform);
-                labelGo.name = "SearchLabel";
-                SetLayerRecursively(labelGo, clone.layer);
-
-                foreach (var mb in labelGo.GetComponentsInChildren<MonoBehaviour>(true))
-                {
-                    if (mb == null) continue;
-                    if (mb.GetIl2CppType().Name != nameof(UILabel))
-                    {
-                        UnityEngine.Object.Destroy(mb);
-                    }
-                }
-
-                label = labelGo.GetComponent<UILabel>();
-            }
-
-            if (label == null)
-            {
-                GameObject labelGo = new("SearchLabel");
-                labelGo.transform.SetParent(clone.transform, false);
-                labelGo.layer = clone.layer;
-                label = labelGo.AddComponent<UILabel>();
-            }
+            UILabel label = CreateClonedOrNewLabel("SearchLabel", clone.transform, sourceLabel);
 
             SearchInput.label = label;
             SearchInput.enabled = true;
@@ -228,10 +158,7 @@ namespace CraftingSearch
             SearchInput.validation = UIInput.Validation.None;
             SearchInput.hideInput = false;
 
-            label.gameObject.SetActive(true);
-            label.enabled = true;
-            label.alpha = 1f;
-            label.color = Color.white;
+            ApplyLabelVisibilityAndColor(label, Color.white);
             label.pivot = UIWidget.Pivot.Left;
             label.alignment = NGUIText.Alignment.Left;
             label.overflowMethod = UILabel.Overflow.ClampContent;
@@ -251,6 +178,42 @@ namespace CraftingSearch
             collider.center = Vector3.zero;
             collider.enabled = true;
 
+            CreateClearButton(clone, sourceLabel);
+
+            EventDelegate.Add(SearchInput.onChange, DelegateSupport.ConvertDelegate<EventDelegate.Callback>(
+                new System.Action(OnSearchTextChanged)
+            ));
+
+            TryGetAboveBlueprintsPosition(panel, targetParent, ref searchBoxX, ref searchBoxY);
+            clone.transform.localPosition = new Vector3(searchBoxX, searchBoxY, -20f);
+        }
+
+        private static void CreateBackgroundSprite(Panel_Crafting panel, GameObject clone)
+        {
+            UISprite bpBgSource = FindBlueprintRowBackgroundSprite(panel);
+            if (bpBgSource == null)
+                return;
+
+            GameObject bgGo = new("SearchBg");
+            bgGo.transform.SetParent(clone.transform, false);
+            bgGo.layer = clone.layer;
+            bgGo.transform.localPosition = Vector3.zero;
+            bgGo.transform.localScale = Vector3.one;
+
+            UISprite bgSprite = bgGo.AddComponent<UISprite>();
+            bgSprite.atlas = bpBgSource.atlas;
+            bgSprite.spriteName = bpBgSource.spriteName;
+            bgSprite.type = bpBgSource.type;
+            bgSprite.alpha = 1f;
+            bgSprite.color = new Color(0.15f, 0.17f, 0.17f, 0.95f);
+            bgSprite.width = BoxWidth;
+            bgSprite.height = BoxHeight;
+            bgSprite.depth = 499;
+            bgSprite.MarkAsChanged();
+        }
+
+        private static void CreateClearButton(GameObject clone, UILabel sourceLabel)
+        {
             // add clearing button to the right side of the search box
             _clearButtonGo = new GameObject("ClearButton");
             _clearButtonGo.transform.SetParent(clone.transform, false);
@@ -258,34 +221,8 @@ namespace CraftingSearch
             _clearButtonGo.transform.localPosition = new Vector3(177f, 0f, -3f); // position the X to the right side of the box, with some padding
             _clearButtonGo.transform.localScale = Vector3.one;
 
-            UILabel clearLabel = null;
-            if (sourceLabel != null)
-            {
-                GameObject clearLabelGo = UnityEngine.Object.Instantiate(sourceLabel.gameObject, _clearButtonGo.transform);
-                clearLabelGo.name = "ClearLabel";
-                SetLayerRecursively(clearLabelGo, _clearButtonGo.layer);
-
-                foreach (var mb in clearLabelGo.GetComponentsInChildren<MonoBehaviour>(true))
-                {
-                    if (mb == null) continue;
-                    if (mb.GetIl2CppType().Name != nameof(UILabel))
-                    {
-                        UnityEngine.Object.Destroy(mb);
-                    }
-                }
-
-                clearLabel = clearLabelGo.GetComponent<UILabel>();
-            }
-
-            if (clearLabel == null)
-            {
-                clearLabel = _clearButtonGo.AddComponent<UILabel>();
-            }
-
-            clearLabel.gameObject.SetActive(true);
-            clearLabel.enabled = true;
-            clearLabel.alpha = 1f;
-            clearLabel.color = new Color(0.85f, 0.85f, 0.85f, 1f);
+            UILabel clearLabel = CreateClonedOrNewLabel("ClearLabel", _clearButtonGo.transform, sourceLabel);
+            ApplyLabelVisibilityAndColor(clearLabel, new Color(0.85f, 0.85f, 0.85f, 1f));
             clearLabel.pivot = UIWidget.Pivot.Center;
             clearLabel.alignment = NGUIText.Alignment.Center;
             clearLabel.overflowMethod = UILabel.Overflow.ResizeFreely;
@@ -314,18 +251,72 @@ namespace CraftingSearch
             );
 
             _clearButtonGo.SetActive(false);
+        }
 
-            EventDelegate.Add(SearchInput.onChange, DelegateSupport.ConvertDelegate<EventDelegate.Callback>(
-                new System.Action(OnSearchTextChanged)
-            ));
+        private static UILabel CreateClonedOrNewLabel(string name, Transform parent, UILabel sourceLabel)
+        {
+            UILabel createdLabel = null;
 
-            TryGetAboveBlueprintsPosition(panel, targetParent, ref searchBoxX, ref searchBoxY);
-            clone.transform.localPosition = new Vector3(searchBoxX, searchBoxY, -20f);
+            if (sourceLabel != null)
+            {
+                GameObject labelGo = UnityEngine.Object.Instantiate(sourceLabel.gameObject, parent);
+                labelGo.name = name;
+                SetLayerRecursively(labelGo, parent.gameObject.layer);
+                StripNonUiMonoBehaviours(labelGo, nameof(UILabel));
+                createdLabel = labelGo.GetComponent<UILabel>();
+            }
+
+            if (createdLabel == null)
+            {
+                GameObject labelGo = new(name);
+                labelGo.transform.SetParent(parent, false);
+                labelGo.layer = parent.gameObject.layer;
+                createdLabel = labelGo.AddComponent<UILabel>();
+            }
+
+            return createdLabel;
+        }
+
+        private static void StripNonUiMonoBehaviours(GameObject root, params string[] allowedTypeNames)
+        {
+            foreach (var mb in root.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if (mb == null)
+                    continue;
+
+                string typeName = mb.GetIl2CppType().Name;
+                bool allowed = false;
+                for (int i = 0; i < allowedTypeNames.Length; i++)
+                {
+                    if (typeName == allowedTypeNames[i])
+                    {
+                        allowed = true;
+                        break;
+                    }
+                }
+
+                if (!allowed)
+                {
+                    UnityEngine.Object.Destroy(mb);
+                }
+            }
+        }
+
+        private static void DestroyExistingWidgets<T>(GameObject root) where T : Component
+        {
+            foreach (var comp in root.GetComponentsInChildren<T>(true))
+            {
+                if (comp != null)
+                {
+                    UnityEngine.Object.Destroy(comp.gameObject == root ? (UnityEngine.Object)comp : comp.gameObject);
+                }
+            }
         }
 
         private static UILabel FindValidFontSource(Panel_Crafting panel)
         {
-            if (panel == null) return null;
+            if (panel == null)
+                return null;
 
             foreach (var lbl in panel.GetComponentsInChildren<UILabel>(true))
             {
@@ -354,16 +345,19 @@ namespace CraftingSearch
             for (int i = 0; i < inputs.Length; i++)
             {
                 var input = inputs[i];
-                if (input == null) continue;
+                if (input == null)
+                    continue;
 
                 string rootName = input.transform.root != null ? input.transform.root.name : "null";
                 if (input.label != null && (input.label.bitmapFont != null || input.label.trueTypeFont != null))
                 {
-                    if (fallback == null) fallback = input;
+                    if (fallback == null)
+                        fallback = input;
                     if (rootName.Contains("Custom") || input.name.Contains("Input") || input.name.Contains("Code"))
                         return input;
                 }
             }
+
             return fallback;
         }
 
@@ -381,28 +375,47 @@ namespace CraftingSearch
             }
         }
 
+        private static void ApplyLabelVisibilityAndColor(UILabel lbl, Color color)
+        {
+            if (lbl == null)
+                return;
+
+            lbl.gameObject.SetActive(true);
+            lbl.enabled = true;
+            lbl.alpha = 1f;
+            lbl.color = color;
+        }
+
         internal static void Clear()
         {
             if (SearchInput != null)
             {
                 SearchInput.value = string.Empty;
                 SearchInput.isSelected = false;
+                if (UICamera.selectedObject == SearchInput.gameObject)
+                {
+                    UICamera.selectedObject = null;
+                }
+
                 if (SearchInput.label != null)
                 {
                     SearchInput.label.text = SearchInput.defaultText ?? string.Empty;
-                    SearchInput.label.color = Color.white;
+                    ApplyLabelVisibilityAndColor(SearchInput.label, Color.white);
                     SearchInput.label.MarkAsChanged();
                 }
             }
+
             _clearButtonGo?.SetActive(false);
-            SyncPlaceholderFontSize();
+            ForcePlaceholderStyle();
             MelonCoroutines.Start(SyncPlaceholderNextFrame());
         }
 
         private static System.Collections.IEnumerator SyncPlaceholderNextFrame()
         {
             yield return null;
-            SyncPlaceholderFontSize();
+            ForcePlaceholderStyle();
+            yield return new WaitForEndOfFrame();
+            ForcePlaceholderStyle();
         }
 
         private static void OnSearchTextChanged()
@@ -411,15 +424,12 @@ namespace CraftingSearch
 
             if (SearchInput != null && SearchInput.label != null)
             {
-                UILabel lbl = SearchInput.label;
-                lbl.gameObject.SetActive(true);
-                lbl.enabled = true;
-                lbl.alpha = 1f;
-                lbl.color = Color.white;
+                ApplyLabelVisibilityAndColor(SearchInput.label, Color.white);
             }
 
             SyncPlaceholderFontSize();
             _clearButtonGo?.SetActive(!string.IsNullOrEmpty(current));
+
             if (!_pendingFilterRefresh)
             {
                 _pendingFilterRefresh = true;
@@ -436,6 +446,25 @@ namespace CraftingSearch
                 yield break;
 
             _craftingPanel.ApplyFilter();
+        }
+
+        internal static void ForcePlaceholderStyle()
+        {
+            if (SearchInput == null || SearchInput.label == null)
+                return;
+
+            UILabel lbl = SearchInput.label;
+            lbl.fontSize = PlaceholderFontSize;
+            lbl.height = PlaceholderFontSize * 2;
+            lbl.color = Color.white;
+
+            if (string.IsNullOrEmpty(SearchInput.value))
+            {
+                lbl.text = SearchInput.defaultText ?? string.Empty;
+            }
+
+            lbl.MarkAsChanged();
+            try { lbl.ProcessAndRequest(); } catch { }
         }
 
         // helper method to adjust the font size of the search input's label based on whether the user is typing or if the placeholder text is showing
@@ -462,25 +491,6 @@ namespace CraftingSearch
                 SearchInput.label.color = Color.white;
                 SearchInput.label.MarkAsChanged();
             }
-        }
-
-        internal static void ForcePlaceholderStyle()
-        {
-            if (SearchInput == null || SearchInput.label == null)
-                return;
-
-            UILabel lbl = SearchInput.label;
-            lbl.fontSize = PlaceholderFontSize;
-            lbl.height = PlaceholderFontSize * 2;
-            lbl.color = Color.white;
-
-            if (string.IsNullOrEmpty(SearchInput.value))
-            {
-                lbl.text = SearchInput.defaultText ?? string.Empty;
-            }
-
-            lbl.MarkAsChanged();
-            try { lbl.ProcessAndRequest(); } catch { }
         }
     }
 }
