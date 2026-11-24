@@ -34,7 +34,7 @@ If you encounter a bug or have a feature request, please open a report on the Gi
 
 - **Inventory Panel Search**: Expand live search filtering to the player inventory so gear, clothing, food, and materials can be located quickly without manual scrolling.
 - **Cooking Panel Search**: Bring name and ingredient search filtering to the cooking interface to make finding recipes and usable ingredients fast when preparing meals.
-- - **ModSettings Integration**: Add a dedicated in-game settings page to customize search behavior, focus hotkeys, and UI preferences.
+- **ModSettings Integration**: Add a dedicated in-game settings page to customize search behavior, focus hotkeys, and UI preferences.
 
 ## Requirements
 
