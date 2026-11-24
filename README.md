@@ -26,6 +26,10 @@ Typing a plain search term searches **both** blueprint names and their required 
 
 > **Tip:** Spaces after a prefix (such as `ing: cloth` or `name! sapling`) are automatically trimmed and handled cleanly.
 
+## Issues
+
+If you encounter a bug or have a feature request, please open a report on the GitHub Issues tracker or reach out in the TLD Modding Discord server @leatherneck6017.
+
 ## Roadmap
 
 - **Inventory Panel Search**: Expand live search filtering to the player inventory so gear, clothing, food, and materials can be located quickly without manual scrolling.
@@ -43,6 +47,13 @@ Typing a plain search term searches **both** blueprint names and their required 
 2. Place `CraftingSearch.dll` into your game's Mods folder.
 3. Launch The Long Dark and open the crafting menu.
 
+## Credits
+
+- Hinterland Studio for creating this amazing game
+- Other TLD modders for inspiration and reference materials
+- The TLD Modding Discord server for guidance, testing, and feedback
+- Modding Framework and Libraries: MelonLoader, Harmony (HarmonyLib), and Il2CppInterop
+
 ## Project Structure
 
 - `Patches.cs` — Harmony patches (Panel_Crafting_Patches) on Panel_Crafting (Enable, ApplyFilter, and Update) for focus hotkeys, input locking, and filter hooks.
@@ -58,18 +69,6 @@ Typing a plain search term searches **both** blueprint names and their required 
 1. Clone or open the project in Visual Studio / .NET SDK targeting `net6.0`.
 2. Update `TLDPath` in the `.csproj` file to point to your The Long Dark installation directory (currently set to `E:\SteamLibrary\steamapps\common\TheLongDark`).
 3. Build the project so references from `$(TLDPath)\MelonLoader\net6\*.dll` and `$(TLDPath)\MelonLoader\Il2CppAssemblies\*.dll` resolve.
-
-## Issues
-
-If you encounter a bug or have a feature request, please open a report on the GitHub Issues tracker or reach out in the TLD Modding Discord server @leatherneck6017.
-
-## Credits
-
-- Author: leatherneck6017
-- Game: Hinterland Studio (The Long Dark)
-- Modding Framework and Libraries: MelonLoader, Harmony (HarmonyLib), and Il2CppInterop
-- The TLD Modding Discord server for guidance, testing, and feedback
-- Other TLD modders for inspiration and reference materials
 
 ## AI Disclosure
 
