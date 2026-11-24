@@ -11,6 +11,8 @@
 		<Nullable>disable</Nullable>
 		<!--This tells the compiler to use the latest C# version.-->
 		<LangVersion>latest</LangVersion>
+		<!-- Append IDE0130 to existing NoWarn values so you don't overwrite defaults -->
+		<NoWarn>$(NoWarn);IDE0130</NoWarn>
 	</PropertyGroup>
 
 	<PropertyGroup>
@@ -30,10 +32,6 @@
 		<Reference Include="$(TLDPath)\MelonLoader\Il2CppAssemblies\*.dll">
 			<Private>false</Private>
 		</Reference>
-	</ItemGroup>
-
-	<ItemGroup>
-	  <Compile Remove="PatchesOLD.cs" />
 	</ItemGroup>
 
 	<Import Project="BuildActions.targets" />
