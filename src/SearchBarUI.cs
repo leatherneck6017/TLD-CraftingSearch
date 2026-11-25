@@ -247,6 +247,7 @@ namespace CraftingSearch
                 {
                     Clear();
                     OnSearchTextChanged();
+                    MelonCoroutines.Start(RefocusAfterClear()); // keep the search box focused after clicking the X
                 })
             );
 
@@ -416,6 +417,22 @@ namespace CraftingSearch
             ForcePlaceholderStyle();
             yield return new WaitForEndOfFrame();
             ForcePlaceholderStyle();
+        }
+
+        // the X click selects the clear button (deselecting the input) and Clear() also deselects it,
+        // so re-select the input after NGUI and the placeholder sync have finished for this click
+        private static System.Collections.IEnumerator RefocusAfterClear()
+        {
+            yield return null;
+            yield return null;
+
+            if (SearchInput == null || _craftingPanel == null || !_craftingPanel.IsEnabled())
+                yield break;
+
+            SearchInput.isSelected = true;
+            UICamera.selectedObject = SearchInput.gameObject;
+            SearchInput.cursorPosition = 0;
+            SyncPlaceholderFontSize();
         }
 
         private static void OnSearchTextChanged()

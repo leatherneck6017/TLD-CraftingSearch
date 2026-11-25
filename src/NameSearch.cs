@@ -80,7 +80,9 @@ namespace CraftingSearch
                     {
                         SearchMode.NameOnly => nameMatches,
                         SearchMode.IngredientOnly => IngredientSearch.MatchesAnyIngredient(bp, searchTerm),
-                        _ => nameMatches || IngredientSearch.MatchesAnyIngredient(bp, searchTerm)
+                        _ => nameMatches ||
+                             IngredientSearch.MatchesAnyIngredient(bp, searchTerm) ||
+                             ModSearch.MatchesAnyModField(bp, searchTerm)
                     };
 
                     if (!matches)

@@ -4,8 +4,9 @@ A MelonLoader mod for The Long Dark that adds a live, responsive search bar into
 
 ## Features
 
-- **In-Menu Search Bar**: Anchored above the BLUEPRINTS header in the crafting menu, styled to match the surrounding UI. Complete with a one-click X clear button, and syntax placeholder text.
+- **In-Menu Search Bar**: Anchored above the BLUEPRINTS header in the crafting menu, styled to match the surrounding UI. Complete with a one-click X clear button that keeps the search box focused so you can keep typing, and syntax placeholder text.
 - **Real-Time Name & Ingredient Filtering**: Filters the blueprint list on text changes against blueprint names and displayed/localized ingredient names rather than internal asset names.
+- **Optional Mod/Pack Name Search**: When [ModdedBlueprintUtils](https://github.com/leatherneck6017/TLD-ModdedBlueprintUtils) is installed, an unprefixed search also matches a blueprint's source mod or pack name (friendly mod name or source label).
 - **Flexible Search Qualifiers**: Supports multiple intuitive prefix delimiters (see below) out of the box with zero configuration required.
 - **Empty State Handling**: Restores category blueprints when a query is cleared and blanks detail and requirement fields when a filter produces no matches.
 - **Keyboard and Input Handling**:
@@ -16,11 +17,11 @@ A MelonLoader mod for The Long Dark that adds a live, responsive search bar into
 
 ## Search Syntax & Prefixes
 
-Typing a plain search term searches **both** blueprint names and their required ingredients. To narrow your results to a specific field, start your query with any of the supported prefixes (case-insensitive):
+Typing a plain search term searches **blueprint names and their required ingredients**. When [ModdedBlueprintUtils](https://github.com/leatherneck6017/TLD-ModdedBlueprintUtils) is installed, that same unprefixed search also matches the blueprint's source mod or pack name. To narrow your results to a specific field, start your query with any of the supported prefixes (case-insensitive). The `name:` and `ingredient:`/`ing:` prefixes do not include mod-name matching:
 
 | Search Mode | Supported Prefixes | Examples |
 | :--- | :--- | :--- |
-| **General Search** (Name & Ingredients) | (No prefix) | `cloth`, `sapling`, `bandage` |
+| **General Search** (Name, Ingredients & Mod/Pack) | (No prefix) | `cloth`, `sapling`, `cozy` |
 | **Blueprint Name Only** | `name:`, `name!`, `name/`, `name\` | `name:bow`, `name!sapling`, `name/coat` |
 | **Ingredients Only** | `ing:`, `ing!`, `ing/`, `ing\`<br>`ingredient:`, `ingredient!`, `ingredient/`, `ingredient\` | `ing:leather`, `ing!sapling`, `ingredient/gut` |
 
@@ -40,6 +41,7 @@ If you encounter a bug or have a feature request, please open a report on the Gi
 
 - The Long Dark (v2.58+)
 - MelonLoader targeting (v0.7.2)
+- Optional: [ModdedBlueprintUtils](https://github.com/leatherneck6017/TLD-ModdedBlueprintUtils), for default-search matching against a blueprint's source mod or pack name. CraftingSearch works without it.
 
 ## Installation
 
@@ -59,6 +61,7 @@ If you encounter a bug or have a feature request, please open a report on the Gi
 - `Patches.cs` — Harmony patches (Panel_Crafting_Patches) on Panel_Crafting (Enable, ApplyFilter, and Update) for focus hotkeys, input locking, and filter hooks.
 - `NameSearch.cs` — Filtering orchestration (ApplySearchFilter), qualifier mode dispatch, category restoration, and detail pane blanking.
 - `IngredientSearch.cs` — Query mode parsing (ParseQuery / SearchMode) across supported prefixes and display-name ingredient matching on BlueprintData.
+- `ModSearch.cs` — Optional ModdedBlueprintUtils (and legacy BlueprintInfo) lookup used by unprefixed search to match source mod or pack names.
 - `ScrollListSync.cs` — ScrollBehaviour patching, blueprint row synchronization, row icon updates, and UIScrollView handling.
 - `RowSelection.cs` — Row click binding, scroll offset calculation, and blueprint selection index resolution.
 - `InputLock.cs` — Rewired input map locking while typing in the search bar.
