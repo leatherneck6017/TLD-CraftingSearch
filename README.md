@@ -27,10 +27,6 @@ Typing a plain search term searches **blueprint names and their required ingredi
 
 > **Tip:** Spaces after a prefix (such as `ing: cloth` or `name! sapling`) are automatically trimmed and handled cleanly.
 
-## Issues
-
-If you encounter a bug or have a feature request, please open a report on the GitHub Issues tracker or reach out in the TLD Modding Discord server @leatherneck6017.
-
 ## Roadmap
 
 - **Inventory Panel Search**: Expand live search filtering to the player inventory so gear, clothing, food, and materials can be located quickly without manual scrolling.
@@ -72,6 +68,10 @@ If you encounter a bug or have a feature request, please open a report on the Gi
 1. Clone or open the project in Visual Studio / .NET SDK targeting `net6.0`.
 2. Update `TLDPath` in the `.csproj` file to point to your The Long Dark installation directory (currently set to `E:\SteamLibrary\steamapps\common\TheLongDark`).
 3. Build the project so references from `$(TLDPath)\MelonLoader\net6\*.dll` and `$(TLDPath)\MelonLoader\Il2CppAssemblies\*.dll` resolve.
+
+## Issues
+
+If you encounter any, please report them on the [GitHub Issues](https://github.com/leatherneck6017/TLD-CraftingSearch/issues) page or contact me directly on the [TLD Modding Discord](https://discord.gg/tldmodding) (@leatherneck6017).
 
 ## AI Disclosure
 
