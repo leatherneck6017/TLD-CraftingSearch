@@ -12,7 +12,6 @@ namespace CraftingSearch
             System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Instance;
 
-        private static bool _scrollBehaviourPatched = false;
         private static int _trackedFirstLineIndex = 0;
 
         private static readonly System.Collections.Generic.HashSet<int> _hookedScrollViews =
@@ -25,47 +24,37 @@ namespace CraftingSearch
             _trackedFirstLineIndex = 0;
         }
 
-        internal static void EnsureScrollBehaviourPatched()
+        // only these ScrollBehaviour methods matter to the postfix. patching them once at startup
+        // keeps the Harmony cost off the first crafting open
+        private static readonly string[] TrackedScrollMethods =
+            ["UpdateFirstLine", "RefreshItems", "OnScrollBarChange", "HandleOnItemSelected", "SetSelectedIndex"];
+
+        private static System.Type _firstLineType;
+        private static System.Reflection.PropertyInfo _firstLineProp;
+        private static System.Reflection.FieldInfo _firstLineField;
+
+        private static System.Type _sbMethodsType;
+        private static System.Reflection.MethodInfo _rebuildItemsMethod;
+        private static System.Reflection.MethodInfo[] _refreshLayoutMethods;
+
+        private static System.Reflection.MethodInfo _refreshSelMethod;
+        private static bool _refreshSelResolved;
+
+        internal static void PatchScrollBehaviour(HarmonyLib.Harmony harmony)
         {
-            if (_scrollBehaviourPatched)
-                return;
-
-            _scrollBehaviourPatched = true;
-            var harmony = new HarmonyLib.Harmony("leatherneck6017.CraftingSearch.ScrollBehaviour");
-            PatchScrollBehaviourScroll(harmony);
-        }
-
-        private static void PatchScrollBehaviourScroll(HarmonyLib.Harmony harmony)
-        {
-            if (harmony == null)
-                return;
-
             var flags = InstanceMemberFlags | System.Reflection.BindingFlags.DeclaredOnly;
-            var sbType = typeof(ScrollBehaviour);
-            var postfixMethod = typeof(ScrollListSync).GetMethod(
+            var postfix = new HarmonyLib.HarmonyMethod(typeof(ScrollListSync).GetMethod(
                 nameof(ScrollBehaviourAnyMethod_Postfix),
-                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic));
 
-            if (postfixMethod == null)
-                return;
-
-            foreach (var method in sbType.GetMethods(flags))
+            foreach (var method in typeof(ScrollBehaviour).GetMethods(flags))
             {
-                if (method == null || method.IsSpecialName)
+                if (method.IsSpecialName || System.Array.IndexOf(TrackedScrollMethods, method.Name) < 0)
                     continue;
-
-                string name = method.Name ?? string.Empty;
-                if (name.StartsWith("get_", System.StringComparison.Ordinal) ||
-                    name.StartsWith("set_", System.StringComparison.Ordinal) ||
-                    name.StartsWith("add_", System.StringComparison.Ordinal) ||
-                    name.StartsWith("remove_", System.StringComparison.Ordinal))
-                {
-                    continue;
-                }
 
                 try
                 {
-                    harmony.Patch(method, postfix: new HarmonyLib.HarmonyMethod(postfixMethod));
+                    harmony.Patch(method, postfix: postfix);
                 }
                 catch
                 {
@@ -80,20 +69,38 @@ namespace CraftingSearch
                 return -1;
 
             var type = sb.GetType();
-            foreach (string memberName in new[] { "FirstLine", "m_FirstLine", "m_TopIndex", "TopIndex", "m_StartIndex", "StartIndex" })
+            if (type != _firstLineType)
             {
-                var prop = type.GetProperty(memberName, InstanceMemberFlags);
-                if (prop != null && prop.PropertyType == typeof(int) && prop.GetIndexParameters().Length == 0)
-                {
-                    try { return (int)prop.GetValue(sb); } catch { }
-                }
+                _firstLineType = type;
+                _firstLineProp = null;
+                _firstLineField = null;
 
-                var field = type.GetField(memberName, InstanceMemberFlags);
-                if (field != null && field.FieldType == typeof(int))
+                foreach (string memberName in new[] { "FirstLine", "m_FirstLine", "m_TopIndex", "TopIndex", "m_StartIndex", "StartIndex" })
                 {
-                    try { return (int)field.GetValue(sb); } catch { }
+                    var prop = type.GetProperty(memberName, InstanceMemberFlags);
+                    if (prop != null && prop.PropertyType == typeof(int) && prop.GetIndexParameters().Length == 0)
+                    {
+                        _firstLineProp = prop;
+                        break;
+                    }
+
+                    var field = type.GetField(memberName, InstanceMemberFlags);
+                    if (field != null && field.FieldType == typeof(int))
+                    {
+                        _firstLineField = field;
+                        break;
+                    }
                 }
             }
+
+            try
+            {
+                if (_firstLineProp != null)
+                    return (int)_firstLineProp.GetValue(sb);
+                if (_firstLineField != null)
+                    return (int)_firstLineField.GetValue(sb);
+            }
+            catch { }
 
             return -1;
         }
@@ -116,15 +123,8 @@ namespace CraftingSearch
                 }
             }
 
-            if (string.Equals(methodName, "HandleOnItemSelected", System.StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(methodName, "SetSelectedIndex", System.StringComparison.OrdinalIgnoreCase))
-            {
-                var panel = __instance.GetComponentInParent<Panel_Crafting>();
-                if (panel != null && !string.IsNullOrEmpty(SearchBarUI.CurrentQuery))
-                {
-                    panel.m_NeedsUpdate = true;
-                }
-            }
+            // don't set m_NeedsUpdate here: our own RefreshItems / SetSelectedIndex calls
+            // would retrigger ApplyFilter every frame while a search is active
         }
 
         internal static void RefreshCraftingScrollList(Panel_Crafting panel, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
@@ -132,7 +132,13 @@ namespace CraftingSearch
             if (panel == null)
                 return;
 
-            var refreshSelMethod = typeof(Panel_Crafting).GetMethod("RefreshSelectedBlueprint", InstanceMemberFlags);
+            if (!_refreshSelResolved)
+            {
+                _refreshSelResolved = true;
+                _refreshSelMethod = typeof(Panel_Crafting).GetMethod("RefreshSelectedBlueprint", InstanceMemberFlags);
+            }
+
+            var refreshSelMethod = _refreshSelMethod;
             if (refreshSelMethod != null)
             {
                 var parms = refreshSelMethod.GetParameters();
@@ -158,7 +164,6 @@ namespace CraftingSearch
                 SyncBlueprintListRows(panel, filtered);
             }
 
-            MarkBlueprintListWidgetsDirty(panel);
         }
 
         private static void SyncBlueprintListRows(Panel_Crafting panel, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
@@ -223,7 +228,9 @@ namespace CraftingSearch
                 if (i < visibleCount)
                 {
                     BlueprintData bp = filtered[i];
-                    string disp = bp != null ? (bp.GetDisplayedNameWithCount() ?? bp.name ?? string.Empty).Trim() : string.Empty;
+                    string disp = bp != null ? SearchCache.GetDisplayedName(bp) : string.Empty;
+                    if (string.IsNullOrEmpty(disp) && bp != null)
+                        disp = bp.name ?? string.Empty;
                     var labels = row.GetComponentsInChildren<UILabel>(true);
                     if (labels != null && labels.Length > 0 && !string.IsNullOrEmpty(disp))
                     {
@@ -253,19 +260,16 @@ namespace CraftingSearch
                 if (sb == null)
                     continue;
 
-                var rebuildMethod = sb.GetType().GetMethod("RebuildItems", InstanceMemberFlags, null, [typeof(int)], null);
-                if (rebuildMethod != null)
+                ResolveScrollBehaviourMethods(sb.GetType());
+
+                if (_rebuildItemsMethod != null)
                 {
-                    try { rebuildMethod.Invoke(sb, [filtered.Count]); } catch { }
+                    try { _rebuildItemsMethod.Invoke(sb, [filtered.Count]); } catch { }
                 }
 
-                foreach (var mName in new[] { "RefreshItems", "LayoutItems" })
+                foreach (var m in _refreshLayoutMethods)
                 {
-                    var m = sb.GetType().GetMethod(mName, InstanceMemberFlags);
-                    if (m != null && m.GetParameters().Length == 0)
-                    {
-                        try { m.Invoke(sb, null); } catch { }
-                    }
+                    try { m.Invoke(sb, null); } catch { }
                 }
             }
 
@@ -294,8 +298,24 @@ namespace CraftingSearch
 
                 scrollView.UpdateScrollbars(true);
             }
+        }
 
-            panel.m_NeedsUpdate = true;
+        private static void ResolveScrollBehaviourMethods(System.Type type)
+        {
+            if (type == _sbMethodsType)
+                return;
+
+            _rebuildItemsMethod = type.GetMethod("RebuildItems", InstanceMemberFlags, null, [typeof(int)], null);
+
+            var list = new System.Collections.Generic.List<System.Reflection.MethodInfo>(2);
+            foreach (var mName in new[] { "RefreshItems", "LayoutItems" })
+            {
+                var m = type.GetMethod(mName, InstanceMemberFlags);
+                if (m != null && m.GetParameters().Length == 0)
+                    list.Add(m);
+            }
+            _refreshLayoutMethods = list.ToArray();
+            _sbMethodsType = type;
         }
 
         private static void SyncRowIcon(Transform row, BlueprintData bp)
@@ -369,24 +389,6 @@ namespace CraftingSearch
                 var del = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UIScrollView.OnDragNotification>(onScrollAction);
                 sv.onMomentumMove += del;
                 sv.onDragFinished += del;
-            }
-        }
-
-        private static void MarkBlueprintListWidgetsDirty(Panel_Crafting panel)
-        {
-            if (panel == null)
-                return;
-
-            foreach (var widget in panel.GetComponentsInChildren<UIWidget>(true))
-            {
-                if (widget == null)
-                    continue;
-
-                string path = widget.transform != null ? widget.transform.name : string.Empty;
-                if (path.Contains("BlueprintListPrefab", System.StringComparison.OrdinalIgnoreCase))
-                {
-                    widget.MarkAsChanged();
-                }
             }
         }
     }

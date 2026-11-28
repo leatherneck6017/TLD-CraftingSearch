@@ -26,8 +26,8 @@ namespace CraftingSearch.src
         {
             if (enable)
             {
-                NameSearch.EnsureScrollBehaviourPatched();
                 SearchBarUI.AttachTo(__instance);
+                SearchCache.BeginWarm(__instance);
             }
             else
             {

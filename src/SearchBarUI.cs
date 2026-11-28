@@ -18,6 +18,8 @@ namespace CraftingSearch
         private static Panel_Crafting _craftingPanel;
         private static bool _pendingFilterRefresh;
         private static GameObject _clearButtonGo;
+        private static UIInput _templateInput;
+        private static UILabel _headerLabel;
 
         internal static string CurrentQuery =>
             SearchInput != null && SearchInput.value != null ? SearchInput.value.Trim() : string.Empty;
@@ -56,6 +58,24 @@ namespace CraftingSearch
             if (panel == null || targetParent == null)
                 return;
 
+            // remember the header label so later opens skip reading every label's text
+            if (_headerLabel == null || !_headerLabel.transform.IsChildOf(panel.transform))
+                _headerLabel = FindBlueprintsHeader(panel);
+
+            UILabel lbl = _headerLabel;
+            if (lbl == null)
+                return;
+
+            Vector3 localHeaderPos = targetParent.InverseTransformPoint(lbl.transform.position);
+            float yOffset = (lbl.height * 0.5f) + (BoxHeight * 0.5f) + 12f;
+            const float rightNudgeX = 8f; // Adjust ~10f–30f to taste
+
+            x = localHeaderPos.x + (BoxWidth * 0.5f) - (lbl.width * 0.5f) + rightNudgeX;
+            y = localHeaderPos.y + yOffset;
+        }
+
+        private static UILabel FindBlueprintsHeader(Panel_Crafting panel)
+        {
             foreach (var lbl in panel.GetComponentsInChildren<UILabel>(true))
             {
                 if (lbl == null)
@@ -67,15 +87,11 @@ namespace CraftingSearch
                 if (txt.Contains("blueprint", System.StringComparison.OrdinalIgnoreCase) ||
                     objName.Contains("blueprint", System.StringComparison.OrdinalIgnoreCase))
                 {
-                    Vector3 localHeaderPos = targetParent.InverseTransformPoint(lbl.transform.position);
-                    float yOffset = (lbl.height * 0.5f) + (BoxHeight * 0.5f) + 12f;
-                    const float rightNudgeX = 8f; // Adjust ~10f–30f to taste
-
-                    x = localHeaderPos.x + (BoxWidth * 0.5f) - (lbl.width * 0.5f) + rightNudgeX;
-                    y = localHeaderPos.y + yOffset;
-                    return;
+                    return lbl;
                 }
             }
+
+            return null;
         }
 
         // Main search bar creation and attachment logic. This is called when the crafting panel is opened.
@@ -109,7 +125,11 @@ namespace CraftingSearch
                 return;
             }
 
-            UIInput template = FindTemplateInput();
+            // the template lives outside the crafting panel, so keep it across scenes while it's alive
+            if (_templateInput == null)
+                _templateInput = FindTemplateInput();
+
+            UIInput template = _templateInput;
             if (template == null)
             {
                 MelonLogger.Warning("[CraftingSearch] Could not find any UIInput template!");
@@ -349,11 +369,12 @@ namespace CraftingSearch
                 if (input == null)
                     continue;
 
-                string rootName = input.transform.root != null ? input.transform.root.name : "null";
                 if (input.label != null && (input.label.bitmapFont != null || input.label.trueTypeFont != null))
                 {
                     if (fallback == null)
                         fallback = input;
+
+                    string rootName = input.transform.root != null ? input.transform.root.name : "null";
                     if (rootName.Contains("Custom") || input.name.Contains("Input") || input.name.Contains("Code"))
                         return input;
                 }
@@ -462,7 +483,7 @@ namespace CraftingSearch
             if (_craftingPanel == null || !_craftingPanel.IsEnabled())
                 yield break;
 
-            _craftingPanel.ApplyFilter();
+            NameSearch.ApplySearchFromQuery(_craftingPanel);
         }
 
         internal static void ForcePlaceholderStyle()

@@ -10,6 +10,9 @@ namespace CraftingSearch
         private static MethodInfo _cachedStringLookup;
         private static bool _searchedMethod;
 
+        internal static bool TryGetSourceFields(BlueprintData bp, out string sourceLabel, out string friendlyModName) =>
+            TryGetSourceInfo(bp, out sourceLabel, out friendlyModName);
+
         internal static bool MatchesAnyModField(BlueprintData bp, string term)
         {
             if (bp == null || string.IsNullOrWhiteSpace(term))

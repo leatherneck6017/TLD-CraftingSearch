@@ -1,6 +1,6 @@
 ﻿using MelonLoader;
 
-[assembly: MelonInfo(typeof(CraftingSearch.CraftingSearchMod), "CraftingSearch", "1.1.0", "leatherneck6017")]
+[assembly: MelonInfo(typeof(CraftingSearch.CraftingSearchMod), "CraftingSearch", "1.1.1", "leatherneck6017")]
 [assembly: MelonGame("Hinterland", "TheLongDark")]
 
 namespace CraftingSearch
@@ -9,6 +9,7 @@ namespace CraftingSearch
     {
         public override void OnInitializeMelon()
         {
+            ScrollListSync.PatchScrollBehaviour(HarmonyInstance);
             MelonLogger.Msg("CraftingSearch initialized.");
         }
     }

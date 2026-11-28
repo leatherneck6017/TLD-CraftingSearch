@@ -12,8 +12,29 @@ namespace CraftingSearch
             System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Instance;
 
+        private static System.Reflection.MethodInfo _setSelectedIndexMethod;
+        private static bool _setSelectedIndexResolved;
+        private static System.Reflection.MethodInfo _clickRefreshAvailMethod;
+        private static bool _clickRefreshAvailResolved;
+
+
         private static readonly System.Collections.Generic.Dictionary<string, int> _lastIndexByBaseName =
             new System.Collections.Generic.Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
+
+        private struct RowBind
+        {
+            public Panel_Crafting panel;
+            public Transform row;
+            public BlueprintData bp;
+            public int fallbackIndex;
+            public int slotIndex;
+            public int visibleSlots;
+            public bool preferPositional;
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<int, RowBind> _rowBinds = new();
+        private static readonly System.Collections.Generic.HashSet<int> _hookedRows = new();
+        private static UIEventListener.VoidDelegate _sharedClick;
 
         internal static void ResetSelectionTracking()
         {
@@ -46,102 +67,126 @@ namespace CraftingSearch
             }
             collider.enabled = true;
 
-            var listener = row.GetComponent<UIEventListener>() ?? row.gameObject.AddComponent<UIEventListener>();
-            listener.onClick = null;
-            listener.onSelect = null;
+            int id = row.gameObject.GetInstanceID();
+            _rowBinds[id] = new RowBind
+            {
+                panel = panel,
+                row = row,
+                bp = boundBlueprint,
+                fallbackIndex = fallbackIndex,
+                slotIndex = slotIndex,
+                visibleSlots = visibleSlots,
+                preferPositional = preferPositionalIndex
+            };
 
-            BlueprintData capturedBp = boundBlueprint;
-            int capturedFallback = fallbackIndex;
-            int capturedSlot = slotIndex;
-            int capturedVisible = visibleSlots;
-            bool capturedPreferPositional = preferPositionalIndex;
+            if (_sharedClick == null)
+            {
+                _sharedClick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UIEventListener.VoidDelegate>(
+                    new System.Action<UnityEngine.GameObject>(OnRowClicked));
+            }
 
-            listener.onClick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UIEventListener.VoidDelegate>(
-                new System.Action<UnityEngine.GameObject>((_) =>
+            if (_hookedRows.Add(id))
+            {
+                var listener = row.GetComponent<UIEventListener>() ?? row.gameObject.AddComponent<UIEventListener>();
+                listener.onSelect = null;
+                listener.onClick = _sharedClick;
+            }
+        }
+
+        private static void OnRowClicked(UnityEngine.GameObject go)
+        {
+            if (go == null || !_rowBinds.TryGetValue(go.GetInstanceID(), out RowBind bind) || bind.panel == null || bind.row == null)
+                return;
+
+            var panel = bind.panel;
+            var row = bind.row;
+            var capturedBp = bind.bp;
+            int capturedFallback = bind.fallbackIndex;
+            int capturedSlot = bind.slotIndex;
+            int capturedVisible = bind.visibleSlots;
+            bool capturedPreferPositional = bind.preferPositional;
+
+            var activeList = panel.m_FilteredBlueprints ?? panel.m_Blueprints;
+                if (activeList == null || activeList.Count == 0)
+                    return;
+
+                int scrollOffset = GetCurrentScrollOffset(panel, activeList.Count, capturedVisible);
+                int positionalIndex = capturedSlot >= 0 ? (scrollOffset + capturedSlot) : -1;
+                int chosenIndex = -1;
+
+                if (capturedPreferPositional)
                 {
-                    var activeList = panel.m_FilteredBlueprints ?? panel.m_Blueprints;
-                    if (activeList == null || activeList.Count == 0)
-                        return;
-
-                    int scrollOffset = GetCurrentScrollOffset(panel, activeList.Count, capturedVisible);
-                    int positionalIndex = capturedSlot >= 0 ? (scrollOffset + capturedSlot) : -1;
-                    int chosenIndex = -1;
-
-                    if (capturedPreferPositional)
+                    if (scrollOffset > 0 && positionalIndex >= 0 && positionalIndex < activeList.Count)
                     {
-                        if (scrollOffset > 0 && positionalIndex >= 0 && positionalIndex < activeList.Count)
+                        chosenIndex = positionalIndex;
+                    }
+                    else if (capturedBp != null)
+                    {
+                        int anchor = capturedSlot >= 0 ? capturedSlot : (positionalIndex >= 0 ? positionalIndex : capturedFallback);
+                        int matchedBpIndex = FindBlueprintIndexInList(activeList, capturedBp, anchor);
+                        if (matchedBpIndex >= 0 && matchedBpIndex < activeList.Count)
                         {
-                            chosenIndex = positionalIndex;
-                        }
-                        else if (capturedBp != null)
-                        {
-                            int anchor = capturedSlot >= 0 ? capturedSlot : (positionalIndex >= 0 ? positionalIndex : capturedFallback);
-                            int matchedBpIndex = FindBlueprintIndexInList(activeList, capturedBp, anchor);
-                            if (matchedBpIndex >= 0 && matchedBpIndex < activeList.Count)
-                            {
-                                chosenIndex = matchedBpIndex;
-                            }
-                        }
-
-                        if (chosenIndex < 0 && capturedSlot >= 0 && capturedSlot < activeList.Count && scrollOffset == 0)
-                        {
-                            chosenIndex = capturedSlot;
-                        }
-
-                        if (chosenIndex < 0 && positionalIndex >= 0 && positionalIndex < activeList.Count)
-                        {
-                            chosenIndex = positionalIndex;
+                            chosenIndex = matchedBpIndex;
                         }
                     }
 
-                    if (chosenIndex < 0 && capturedFallback >= 0 && capturedFallback < activeList.Count)
+                    if (chosenIndex < 0 && capturedSlot >= 0 && capturedSlot < activeList.Count && scrollOffset == 0)
                     {
-                        chosenIndex = capturedFallback;
+                        chosenIndex = capturedSlot;
                     }
 
-                    if (chosenIndex < 0)
+                    if (chosenIndex < 0 && positionalIndex >= 0 && positionalIndex < activeList.Count)
                     {
-                        int resolvedByLabel = ResolveBlueprintIndexForRow(panel, row, activeList);
-                        if (resolvedByLabel >= 0 && resolvedByLabel < activeList.Count)
+                        chosenIndex = positionalIndex;
+                    }
+                }
+
+                if (chosenIndex < 0 && capturedFallback >= 0 && capturedFallback < activeList.Count)
+                {
+                    chosenIndex = capturedFallback;
+                }
+
+                if (chosenIndex < 0)
+                {
+                    int resolvedByLabel = ResolveBlueprintIndexForRow(panel, row, activeList);
+                    if (resolvedByLabel >= 0 && resolvedByLabel < activeList.Count)
+                    {
+                        chosenIndex = resolvedByLabel;
+                    }
+                }
+
+                if (chosenIndex >= 0 && chosenIndex < activeList.Count)
+                {
+                    string rowText = string.Empty;
+                    foreach (var lbl in row.GetComponentsInChildren<UILabel>(true))
+                    {
+                        if (lbl != null && !string.IsNullOrWhiteSpace(lbl.text))
                         {
-                            chosenIndex = resolvedByLabel;
+                            rowText = lbl.text.Trim();
+                            break;
                         }
                     }
 
-                    if (chosenIndex >= 0 && chosenIndex < activeList.Count)
+                    if (!string.IsNullOrEmpty(rowText))
                     {
-                        string rowText = string.Empty;
-                        foreach (var lbl in row.GetComponentsInChildren<UILabel>(true))
+                        var currentBp = activeList[chosenIndex];
+                        string currentDisp = currentBp != null ? SearchCache.GetDisplayedName(currentBp) : string.Empty;
+                        if (!string.Equals(currentDisp, rowText, System.StringComparison.OrdinalIgnoreCase))
                         {
-                            if (lbl != null && !string.IsNullOrWhiteSpace(lbl.text))
+                            int labelMatch = FindMatchingIndexNearHint(activeList, row, UnityEngine.Mathf.Max(chosenIndex, capturedSlot));
+                            if (labelMatch >= 0 && labelMatch < activeList.Count)
                             {
-                                rowText = lbl.text.Trim();
-                                break;
-                            }
-                        }
-
-                        if (!string.IsNullOrEmpty(rowText))
-                        {
-                            var currentBp = activeList[chosenIndex];
-                            string currentDisp = currentBp != null ? (currentBp.GetDisplayedNameWithCount() ?? string.Empty).Trim() : string.Empty;
-                            if (!string.Equals(currentDisp, rowText, System.StringComparison.OrdinalIgnoreCase))
-                            {
-                                int labelMatch = FindMatchingIndexNearHint(activeList, row, UnityEngine.Mathf.Max(chosenIndex, capturedSlot));
-                                if (labelMatch >= 0 && labelMatch < activeList.Count)
-                                {
-                                    chosenIndex = labelMatch;
-                                }
+                                chosenIndex = labelMatch;
                             }
                         }
                     }
+                }
 
-                    if (chosenIndex >= 0 && chosenIndex < activeList.Count)
-                    {
-                        SelectBlueprintByIndex(panel, chosenIndex);
-                        panel.m_NeedsUpdate = true;
-                    }
-                })
-            );
+                if (chosenIndex >= 0 && chosenIndex < activeList.Count)
+                {
+                    SelectBlueprintByIndex(panel, chosenIndex);
+                    panel.m_NeedsUpdate = true;
+                }
         }
 
         private static void SelectBlueprintByIndex(Panel_Crafting panel, int blueprintIndex)
@@ -166,28 +211,31 @@ namespace CraftingSearch
                 var sb = panel.GetComponentInChildren<ScrollBehaviour>(true);
                 if (sb != null)
                 {
-                    var setSelMethod = sb.GetType().GetMethod("SetSelectedIndex", InstanceMemberFlags, null, [typeof(int)], null);
-                    if (setSelMethod != null)
+                    if (_setSelectedIndexMethod == null && !_setSelectedIndexResolved)
                     {
-                        try { setSelMethod.Invoke(sb, [blueprintIndex]); } catch { }
+                        _setSelectedIndexResolved = true;
+                        _setSelectedIndexMethod = sb.GetType().GetMethod("SetSelectedIndex", InstanceMemberFlags, null, [typeof(int)], null);
+                    }
+
+                    if (_setSelectedIndexMethod != null)
+                    {
+                        try { _setSelectedIndexMethod.Invoke(sb, [blueprintIndex]); } catch { }
                     }
                 }
 
-                var refreshAvail = typeof(Panel_Crafting).GetMethod("RefreshAvailableBlueprints", InstanceMemberFlags);
-                if (refreshAvail != null && refreshAvail.GetParameters().Length == 0)
+                if (!_clickRefreshAvailResolved)
                 {
-                    try { refreshAvail.Invoke(panel, null); } catch { }
+                    _clickRefreshAvailResolved = true;
+                    var m = typeof(Panel_Crafting).GetMethod("RefreshAvailableBlueprints", InstanceMemberFlags);
+                    _clickRefreshAvailMethod = m != null && m.GetParameters().Length == 0 ? m : null;
+                }
+
+                if (_clickRefreshAvailMethod != null)
+                {
+                    try { _clickRefreshAvailMethod.Invoke(panel, null); } catch { }
                 }
 
                 panel.m_NeedsUpdate = true;
-
-                foreach (var widget in panel.GetComponentsInChildren<UIWidget>(true))
-                {
-                    if (widget != null)
-                    {
-                        widget.MarkAsChanged();
-                    }
-                }
             }
             catch
             {

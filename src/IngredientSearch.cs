@@ -64,6 +64,12 @@ namespace CraftingSearch
             "m_GearItemData", "GearItemData"
         ];
 
+        // member lookups only depend on the type, so resolve each one once. values are still read live
+        private static readonly Dictionary<(Type, string), PropertyInfo> _propCache = new();
+        private static readonly Dictionary<(Type, string), FieldInfo> _fieldCache = new();
+        private static readonly Dictionary<Type, (PropertyInfo count, PropertyInfo indexer)> _listAccessCache = new();
+        private static readonly Dictionary<Type, FieldInfo[]> _scanFieldCache = new();
+
         internal static SearchMode ParseQuery(string rawQuery, out string term)
         {
             term = string.Empty;
@@ -129,21 +135,8 @@ namespace CraftingSearch
             }
 
             // Fallback: scan any array/list/collection members on BlueprintData that might hold ingredient entries
-            foreach (FieldInfo field in type.GetFields(MemberFlags))
+            foreach (FieldInfo field in GetScanFields(type))
             {
-                if (field.FieldType == typeof(string) || field.FieldType.IsPrimitive)
-                    continue;
-
-                string lower = field.Name.ToLowerInvariant();
-                if (!lower.Contains("gear") &&
-                    !lower.Contains("item") &&
-                    !lower.Contains("ingred") &&
-                    !lower.Contains("mat") &&
-                    !lower.Contains("req"))
-                {
-                    continue;
-                }
-
                 object val = null;
                 try { val = field.GetValue(bp); } catch { }
                 if (val != null && ObjectMatchesQuery(val, query, visited, depth: 0))
@@ -151,6 +144,56 @@ namespace CraftingSearch
             }
 
             return false;
+        }
+
+        internal static void CollectNames(BlueprintData bp, List<string> dest)
+        {
+            if (bp == null || dest == null)
+                return;
+
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            Type type = bp.GetType();
+
+            foreach (string memberName in CandidateMemberNames)
+            {
+                if (TryGetMemberValue(bp, type, memberName, out object val) && val != null)
+                    CollectFromObject(val, dest, visited, depth: 0);
+            }
+
+            foreach (FieldInfo field in GetScanFields(type))
+            {
+                object val = null;
+                try { val = field.GetValue(bp); } catch { }
+                if (val != null)
+                    CollectFromObject(val, dest, visited, depth: 0);
+            }
+        }
+
+        private static FieldInfo[] GetScanFields(Type type)
+        {
+            if (_scanFieldCache.TryGetValue(type, out FieldInfo[] cached))
+                return cached;
+
+            var list = new List<FieldInfo>();
+            foreach (FieldInfo field in type.GetFields(MemberFlags))
+            {
+                if (field.FieldType == typeof(string) || field.FieldType.IsPrimitive)
+                    continue;
+
+                string lower = field.Name.ToLowerInvariant();
+                if (lower.Contains("gear") ||
+                    lower.Contains("item") ||
+                    lower.Contains("ingred") ||
+                    lower.Contains("mat") ||
+                    lower.Contains("req"))
+                {
+                    list.Add(field);
+                }
+            }
+
+            cached = list.ToArray();
+            _scanFieldCache[type] = cached;
+            return cached;
         }
 
         private static bool ObjectMatchesQuery(
@@ -175,8 +218,15 @@ namespace CraftingSearch
             }
 
             Type type = obj.GetType();
-            PropertyInfo countProp = type.GetProperty("Count") ?? type.GetProperty("Length");
-            PropertyInfo itemIndexer = type.GetProperty("Item", [typeof(int)]) ?? type.GetProperty("default", [typeof(int)]);
+            if (!_listAccessCache.TryGetValue(type, out var access))
+            {
+                access = (type.GetProperty("Count") ?? type.GetProperty("Length"),
+                          type.GetProperty("Item", [typeof(int)]) ?? type.GetProperty("default", [typeof(int)]));
+                _listAccessCache[type] = access;
+            }
+
+            PropertyInfo countProp = access.count;
+            PropertyInfo itemIndexer = access.indexer;
             if (countProp != null && itemIndexer != null)
             {
                 try
@@ -215,14 +265,84 @@ namespace CraftingSearch
             return false;
         }
 
+        private static void CollectFromObject(
+            object obj,
+            List<string> dest,
+            HashSet<object> visited,
+            int depth)
+        {
+            if (obj == null || depth > 4)
+                return;
+
+            if (!obj.GetType().IsValueType && !visited.Add(obj))
+                return;
+
+            if (obj is IEnumerable enumerable)
+            {
+                foreach (object item in enumerable)
+                {
+                    if (item != null)
+                        CollectFromObject(item, dest, visited, depth + 1);
+                }
+            }
+
+            Type type = obj.GetType();
+            if (!_listAccessCache.TryGetValue(type, out var access))
+            {
+                access = (type.GetProperty("Count") ?? type.GetProperty("Length"),
+                          type.GetProperty("Item", [typeof(int)]) ?? type.GetProperty("default", [typeof(int)]));
+                _listAccessCache[type] = access;
+            }
+
+            PropertyInfo countProp = access.count;
+            PropertyInfo itemIndexer = access.indexer;
+            if (countProp != null && itemIndexer != null)
+            {
+                try
+                {
+                    int count = Convert.ToInt32(countProp.GetValue(obj));
+                    for (int i = 0; i < count; i++)
+                    {
+                        object elem = itemIndexer.GetValue(obj, [i]);
+                        if (elem != null)
+                            CollectFromObject(elem, dest, visited, depth + 1);
+                    }
+                }
+                catch { }
+            }
+
+            foreach (string nameMember in NameMembers)
+            {
+                if (TryGetStringMember(obj, type, nameMember, out string strVal) &&
+                    !string.IsNullOrEmpty(strVal) &&
+                    !dest.Contains(strVal))
+                {
+                    dest.Add(strVal);
+                }
+            }
+
+            foreach (string subMember in NestedItemMembers)
+            {
+                if (TryGetMemberValue(obj, type, subMember, out object sub) && sub != null)
+                    CollectFromObject(sub, dest, visited, depth + 1);
+            }
+        }
+
         private static bool TryGetMemberValue(object target, Type type, string memberName, out object value)
         {
             value = null;
             if (target == null || type == null)
                 return false;
 
-            PropertyInfo prop = type.GetProperty(memberName, MemberFlags);
-            if (prop != null && prop.GetIndexParameters().Length == 0)
+            if (!_propCache.TryGetValue((type, memberName), out PropertyInfo prop))
+            {
+                prop = type.GetProperty(memberName, MemberFlags);
+                if (prop != null && prop.GetIndexParameters().Length != 0)
+                    prop = null;
+                _propCache[(type, memberName)] = prop;
+            }
+
+            if (prop != null)
             {
                 try
                 {
@@ -232,7 +352,12 @@ namespace CraftingSearch
                 catch { }
             }
 
-            FieldInfo field = type.GetField(memberName, MemberFlags);
+            if (!_fieldCache.TryGetValue((type, memberName), out FieldInfo field))
+            {
+                field = type.GetField(memberName, MemberFlags);
+                _fieldCache[(type, memberName)] = field;
+            }
+
             if (field != null)
             {
                 try

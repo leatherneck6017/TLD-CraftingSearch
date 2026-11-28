@@ -11,102 +11,204 @@ namespace CraftingSearch
             System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Instance;
 
-        private static bool _hadSearchQuery = false;
+        private static bool _hadSearchQuery;
+        private static bool _applying;
 
-        internal static void EnsureScrollBehaviourPatched() =>
-            ScrollListSync.EnsureScrollBehaviourPatched();
+        private static System.Reflection.MethodInfo _refreshAvailMethod;
+        private static bool _refreshAvailResolved;
+
+        // category list captured from the game's ApplyFilter, so typing can filter without
+        // calling ApplyFilter again (that retriggers this postfix and costs ~30 ms of game time)
+        private static readonly System.Collections.Generic.List<BlueprintData> _categorySnapshot = new();
+        private static int _snapPanelId;
+        private static int _snapCategory;
+        private static int _snapFilter;
+
+        private static string _lastQuery = string.Empty;
+        private static int _lastResultCount = -1;
+        private static int _lastResultFirst;
+        private static int _lastResultLast;
+        private static int _layoutPanelId;
+        private static UIGrid[] _layoutGrids = System.Array.Empty<UIGrid>();
+        private static UITable[] _layoutTables = System.Array.Empty<UITable>();
+        private static UIScrollView[] _layoutScrollViews = System.Array.Empty<UIScrollView>();
+
+        // the detail/requirement objects are fixed in the panel prefab, so find them once per panel
+        // instead of walking every transform and marshalling names on each filter pass
+        private static int _detailTargetsPanelId;
+        private static readonly System.Collections.Generic.List<(GameObject go, bool showOnRestore)> _detailTargets = new();
 
         internal static void SetNativeInputLock(bool locked) =>
             InputLock.SetNativeInputLock(locked);
 
-        internal static void ApplySearchFilter(Panel_Crafting __instance)
+        // called from the game's ApplyFilter postfix
+        internal static void ApplySearchFilter(Panel_Crafting panel) =>
+            ApplySearchFilter(panel, fromGameApplyFilter: true);
+
+        // called from the search box onChange; filters the snapshotted category list in place
+        internal static void ApplySearchFromQuery(Panel_Crafting panel) =>
+            ApplySearchFilter(panel, fromGameApplyFilter: false);
+
+        private static void ApplySearchFilter(Panel_Crafting panel, bool fromGameApplyFilter)
         {
-            if (__instance == null)
+            if (panel == null || _applying)
                 return;
 
-            RowSelection.ResetSelectionTracking();
-
-            string query = SearchBarUI.CurrentQuery;
-            var filtered = __instance.m_FilteredBlueprints;
-            bool isQueryEmpty = string.IsNullOrEmpty(query);
-            bool queryJustCleared = _hadSearchQuery && isQueryEmpty;
-            _hadSearchQuery = !isQueryEmpty;
-
-            if (queryJustCleared && filtered != null && filtered.Count == 0 && __instance.m_Blueprints != null && __instance.m_Blueprints.Count > 0)
-            {
-                filtered.Clear();
-                for (int i = 0; i < __instance.m_Blueprints.Count; i++)
-                {
-                    var bp = __instance.m_Blueprints[i];
-                    if (bp != null)
-                    {
-                        filtered.Add(bp);
-                    }
-                }
-
-                foreach (string methodName in new[] { "FilterByCategory", "ApplyCategoryFilter", "RefreshCategory", "RefreshFilteredBlueprints", "UpdateFilteredBlueprints" })
-                {
-                    var m = typeof(Panel_Crafting).GetMethod(methodName, InstanceMemberFlags);
-                    if (m != null && m.GetParameters().Length == 0)
-                    {
-                        try { m.Invoke(__instance, null); break; } catch { }
-                    }
-                }
-            }
-
+            var filtered = panel.m_FilteredBlueprints;
             if (filtered == null)
                 return;
 
-            RestoreCategoryBlueprintsIfEmpty(__instance, filtered, query);
-
+            string query = SearchBarUI.CurrentQuery;
             SearchMode mode = IngredientSearch.ParseQuery(query, out string searchTerm);
             bool hasEffectiveQuery = !string.IsNullOrEmpty(searchTerm);
+            bool queryJustCleared = _hadSearchQuery && !hasEffectiveQuery;
+            _hadSearchQuery = hasEffectiveQuery;
 
-            if (hasEffectiveQuery)
+            int panelId = panel.GetInstanceID();
+            int category = (int)panel.m_CurrentCategory;
+            int filter = (int)panel.m_CurrentFilter;
+            bool snapshotMatches = HasSnapshot(panelId, category, filter);
+
+            if (fromGameApplyFilter)
             {
-                for (int i = filtered.Count - 1; i >= 0; i--)
+                if (!hasEffectiveQuery || !snapshotMatches || filtered.Count > _lastResultCount)
+                    SaveCategorySnapshot(panel, filtered, panelId, category, filter);
+
+                if (!hasEffectiveQuery)
                 {
-                    BlueprintData bp = filtered[i];
-                    if (bp == null)
+                    if (queryJustCleared)
+                        CommitFilterChange(panel, filtered, string.Empty, blankDetails: false, refreshAvail: true);
+                    else
+                        RememberResult(string.Empty, filtered);
+                    return;
+                }
+            }
+            else if (!snapshotMatches)
+            {
+                // first keystroke before the game has given us a category list
+                panel.ApplyFilter();
+                return;
+            }
+
+            if (snapshotMatches)
+                RestoreFromSnapshot(filtered);
+
+            if (!hasEffectiveQuery)
+            {
+                if (!queryJustCleared && SameResult(string.Empty, filtered))
+                    return;
+
+                CommitFilterChange(panel, filtered, string.Empty, blankDetails: false, refreshAvail: true);
+                return;
+            }
+
+            SearchCache.EnsureList(panel);
+            for (int i = filtered.Count - 1; i >= 0; i--)
+            {
+                BlueprintData bp = filtered[i];
+                if (bp == null || !SearchCache.Matches(bp, mode, searchTerm))
+                    filtered.RemoveAt(i);
+            }
+
+            if (SameResult(query, filtered))
+                return;
+
+            CommitFilterChange(panel, filtered, query, blankDetails: filtered.Count == 0, refreshAvail: false);
+        }
+
+        private static void CommitFilterChange(
+            Panel_Crafting panel,
+            Il2CppSystem.Collections.Generic.List<BlueprintData> filtered,
+            string query,
+            bool blankDetails,
+            bool refreshAvail)
+        {
+            _applying = true;
+            try
+            {
+                RowSelection.ResetSelectionTracking();
+                SetDetailPaneBlank(panel, blankDetails);
+                if (refreshAvail)
+                {
+                    if (!_refreshAvailResolved)
                     {
-                        filtered.RemoveAt(i);
-                        continue;
+                        _refreshAvailResolved = true;
+                        var m = typeof(Panel_Crafting).GetMethod("RefreshAvailableBlueprints", InstanceMemberFlags);
+                        _refreshAvailMethod = m != null && m.GetParameters().Length == 0 ? m : null;
                     }
 
-                    bool nameMatches = (bp.GetDisplayedNameWithCount() ?? string.Empty).Contains(searchTerm, System.StringComparison.OrdinalIgnoreCase) ||
-                                       (bp.name ?? string.Empty).Contains(searchTerm, System.StringComparison.OrdinalIgnoreCase);
-
-                    bool matches = mode switch
+                    if (_refreshAvailMethod != null)
                     {
-                        SearchMode.NameOnly => nameMatches,
-                        SearchMode.IngredientOnly => IngredientSearch.MatchesAnyIngredient(bp, searchTerm),
-                        _ => nameMatches ||
-                             IngredientSearch.MatchesAnyIngredient(bp, searchTerm) ||
-                             ModSearch.MatchesAnyModField(bp, searchTerm)
-                    };
-
-                    if (!matches)
-                    {
-                        filtered.RemoveAt(i);
+                        try { _refreshAvailMethod.Invoke(panel, null); } catch { }
                     }
                 }
 
-                RepositionCraftingWidgets(__instance);
+                RepositionCraftingWidgets(panel);
+                ScrollListSync.RefreshCraftingScrollList(panel, filtered);
+                RememberResult(query, filtered);
             }
-
-            __instance.m_NeedsUpdate = true;
-
-            var refreshAvail = typeof(Panel_Crafting).GetMethod("RefreshAvailableBlueprints", InstanceMemberFlags);
-            if (refreshAvail != null && refreshAvail.GetParameters().Length == 0)
+            finally
             {
-                try { refreshAvail.Invoke(__instance, null); } catch { }
+                _applying = false;
+            }
+        }
+
+        private static bool HasSnapshot(int panelId, int category, int filter) =>
+            _snapPanelId == panelId && _snapCategory == category && _snapFilter == filter && _snapPanelId != 0;
+
+        private static void SaveCategorySnapshot(
+            Panel_Crafting panel,
+            Il2CppSystem.Collections.Generic.List<BlueprintData> filtered,
+            int panelId,
+            int category,
+            int filter)
+        {
+            _categorySnapshot.Clear();
+            if (filtered != null)
+            {
+                for (int i = 0; i < filtered.Count; i++)
+                {
+                    var bp = filtered[i];
+                    if (bp != null)
+                        _categorySnapshot.Add(bp);
+                }
             }
 
-            RepositionCraftingWidgets(__instance);
+            _snapPanelId = panelId;
+            _snapCategory = category;
+            _snapFilter = filter;
+        }
 
-            bool noSearchMatches = hasEffectiveQuery && filtered.Count == 0;
-            SetDetailPaneBlank(__instance, noSearchMatches);
-            ScrollListSync.RefreshCraftingScrollList(__instance, filtered);
+        private static void RestoreFromSnapshot(Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
+        {
+            filtered.Clear();
+            for (int i = 0; i < _categorySnapshot.Count; i++)
+            {
+                var bp = _categorySnapshot[i];
+                if (bp != null)
+                    filtered.Add(bp);
+            }
+        }
+
+        private static void RememberResult(string query, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
+        {
+            _lastQuery = query ?? string.Empty;
+            _lastResultCount = filtered != null ? filtered.Count : 0;
+            _lastResultFirst = _lastResultCount > 0 && filtered[0] != null ? filtered[0].GetInstanceID() : 0;
+            _lastResultLast = _lastResultCount > 0 && filtered[_lastResultCount - 1] != null
+                ? filtered[_lastResultCount - 1].GetInstanceID()
+                : 0;
+        }
+
+        private static bool SameResult(string query, Il2CppSystem.Collections.Generic.List<BlueprintData> filtered)
+        {
+            int count = filtered != null ? filtered.Count : 0;
+            int first = count > 0 && filtered[0] != null ? filtered[0].GetInstanceID() : 0;
+            int last = count > 0 && filtered[count - 1] != null ? filtered[count - 1].GetInstanceID() : 0;
+            return (query ?? string.Empty) == _lastQuery
+                && count == _lastResultCount
+                && first == _lastResultFirst
+                && last == _lastResultLast;
         }
 
         private static void RepositionCraftingWidgets(Panel_Crafting panel)
@@ -114,7 +216,15 @@ namespace CraftingSearch
             if (panel == null || panel.gameObject == null || !panel.IsEnabled())
                 return;
 
-            foreach (var grid in panel.GetComponentsInChildren<UIGrid>(true))
+            if (_layoutPanelId != panel.GetInstanceID() || LayoutCacheStale())
+            {
+                _layoutPanelId = panel.GetInstanceID();
+                _layoutGrids = panel.GetComponentsInChildren<UIGrid>(true);
+                _layoutTables = panel.GetComponentsInChildren<UITable>(true);
+                _layoutScrollViews = panel.GetComponentsInChildren<UIScrollView>(true);
+            }
+
+            foreach (var grid in _layoutGrids)
             {
                 if (grid != null)
                 {
@@ -123,7 +233,7 @@ namespace CraftingSearch
                 }
             }
 
-            foreach (var table in panel.GetComponentsInChildren<UITable>(true))
+            foreach (var table in _layoutTables)
             {
                 if (table != null)
                 {
@@ -132,102 +242,70 @@ namespace CraftingSearch
                 }
             }
 
-            foreach (var scrollView in panel.GetComponentsInChildren<UIScrollView>(true))
+            foreach (var scrollView in _layoutScrollViews)
             {
                 if (scrollView != null)
-                {
                     scrollView.UpdateScrollbars(true);
-                }
             }
         }
 
-        private static void RestoreCategoryBlueprintsIfEmpty(
-            Panel_Crafting panel,
-            Il2CppSystem.Collections.Generic.List<BlueprintData> filtered,
-            string query)
+        private static bool LayoutCacheStale()
         {
-            if (panel == null || filtered == null || !string.IsNullOrEmpty(query))
-                return;
-
-            if (filtered.Count > 0)
-                return;
-
-            var allBlueprints = panel.m_Blueprints;
-            if (allBlueprints == null || allBlueprints.Count == 0)
-                return;
-
-            object selectedCategory = null;
-            foreach (string memberName in new[] { "m_SelectedCategory", "m_CurrentCategory", "m_Category", "SelectedCategory", "CurrentCategory" })
+            foreach (var grid in _layoutGrids)
             {
-                var field = typeof(Panel_Crafting).GetField(memberName, InstanceMemberFlags);
-                if (field != null)
-                {
-                    try { selectedCategory = field.GetValue(panel); break; } catch { }
-                }
-
-                var prop = typeof(Panel_Crafting).GetProperty(memberName, InstanceMemberFlags);
-                if (prop != null && prop.GetIndexParameters().Length == 0)
-                {
-                    try { selectedCategory = prop.GetValue(panel); break; } catch { }
-                }
+                if (grid == null)
+                    return true;
             }
 
-            filtered.Clear();
-
-            for (int i = 0; i < allBlueprints.Count; i++)
+            foreach (var table in _layoutTables)
             {
-                var bp = allBlueprints[i];
-                if (bp == null)
-                    continue;
-
-                if (selectedCategory != null)
-                {
-                    bool categoryMatches = false;
-                    foreach (string bpCatMember in new[] { "m_Category", "Category", "m_CraftingCategory", "CraftingCategory" })
-                    {
-                        var bpField = bp.GetType().GetField(bpCatMember, InstanceMemberFlags);
-                        if (bpField != null)
-                        {
-                            try
-                            {
-                                var val = bpField.GetValue(bp);
-                                if (val != null && (Equals(val, selectedCategory) || string.Equals(val.ToString(), selectedCategory.ToString(), System.StringComparison.OrdinalIgnoreCase)))
-                                {
-                                    categoryMatches = true;
-                                    break;
-                                }
-                            }
-                            catch { }
-                        }
-
-                        var bpProp = bp.GetType().GetProperty(bpCatMember, InstanceMemberFlags);
-                        if (bpProp != null && bpProp.GetIndexParameters().Length == 0)
-                        {
-                            try
-                            {
-                                var val = bpProp.GetValue(bp);
-                                if (val != null && (Equals(val, selectedCategory) || string.Equals(val.ToString(), selectedCategory.ToString(), System.StringComparison.OrdinalIgnoreCase)))
-                                {
-                                    categoryMatches = true;
-                                    break;
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-
-                    if (!categoryMatches)
-                        continue;
-                }
-
-                filtered.Add(bp);
+                if (table == null)
+                    return true;
             }
+
+            foreach (var scrollView in _layoutScrollViews)
+            {
+                if (scrollView == null)
+                    return true;
+            }
+
+            return _layoutGrids.Length == 0 && _layoutTables.Length == 0 && _layoutScrollViews.Length == 0;
         }
 
         private static void SetDetailPaneBlank(Panel_Crafting panel, bool blank)
         {
             if (panel == null)
                 return;
+
+            if (!DetailTargetsValid(panel))
+                CollectDetailTargets(panel);
+
+            foreach (var (go, showOnRestore) in _detailTargets)
+            {
+                if (blank)
+                    go.SetActive(false);
+                else if (showOnRestore)
+                    go.SetActive(true);
+            }
+        }
+
+        private static bool DetailTargetsValid(Panel_Crafting panel)
+        {
+            if (_detailTargetsPanelId != panel.GetInstanceID() || _detailTargets.Count == 0)
+                return false;
+
+            foreach (var (go, _) in _detailTargets)
+            {
+                if (go == null)
+                    return false;
+            }
+            return true;
+        }
+
+        private static void CollectDetailTargets(Panel_Crafting panel)
+        {
+            _detailTargets.Clear();
+            _detailTargetsPanelId = panel.GetInstanceID();
 
             Transform searchBarGo = SearchBarUI.SearchInput != null
                 ? SearchBarUI.SearchInput.transform
@@ -270,18 +348,9 @@ namespace CraftingSearch
 
                 if (isDetailOrRequirementTarget)
                 {
-                    if (blank)
-                    {
-                        t.gameObject.SetActive(false);
-                    }
-                    else
-                    {
-                        if (!n.StartsWith("RequirementCraftMaterial ", System.StringComparison.OrdinalIgnoreCase) ||
-                            n.EndsWith(" 1", System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            t.gameObject.SetActive(true);
-                        }
-                    }
+                    _detailTargets.Add((t.gameObject,
+                        !n.StartsWith("RequirementCraftMaterial ", System.StringComparison.OrdinalIgnoreCase) ||
+                        n.EndsWith(" 1", System.StringComparison.OrdinalIgnoreCase)));
                 }
             }
         }

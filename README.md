@@ -1,4 +1,4 @@
-# CraftingSearch
+# Crafting Search
 
 A MelonLoader mod for The Long Dark that adds a live, responsive search bar into the crafting menu to filter blueprints by name, required ingredients, or both. Not having a native blueprint search in the base game has long been a small friction point for me, especially as the crafting list grows alongside all the great mods available for the game.
 
@@ -62,6 +62,7 @@ Typing a plain search term searches **blueprint names and their required ingredi
 - `RowSelection.cs` — Row click binding, scroll offset calculation, and blueprint selection index resolution.
 - `InputLock.cs` — Rewired input map locking while typing in the search bar.
 - `SearchBarUI.cs` — NGUI UIInput creation, positioning above BLUEPRINTS, clear button handling, placeholder styling sync, and deferred filter refresh coroutine.
+- `SearchCache.cs` — Cached blueprint display names, ingredient names, and source-mod names used by the search filter.
 
 ## Building from Source
 
